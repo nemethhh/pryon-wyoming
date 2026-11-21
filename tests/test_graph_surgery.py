@@ -24,6 +24,10 @@ from onnx import helper, numpy_helper
 
 from pypryon.graph import ORT_LOAD_ERROR_HYBRID, make_portable
 
+# Task 7 grew make_portable's default to also rewrite the Hybrid* ops; the
+# mechanical-only layer it builds on is still exposed (and tested here) via
+# rewrite_hybrid=False.
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
 ALEXA_ONNX = (
@@ -92,7 +96,7 @@ def _load_and_classify(data: bytes) -> str:
 @pytest.mark.skipif(not ALEXA_ONNX.exists(), reason="firmware model dir absent")
 class TestAlexaSurgery:
     def test_mechanically_clean_and_only_hybrid_ops_block_ort(self) -> None:
-        out = make_portable(ALEXA_ONNX.read_bytes())
+        out = make_portable(ALEXA_ONNX.read_bytes(), rewrite_hybrid=False)
         model = onnx.load_from_string(out)
         graph = model.graph
 
@@ -132,8 +136,8 @@ class TestAlexaSurgery:
         assert _load_and_classify(out) == "hybrid"
 
     def test_idempotent(self) -> None:
-        once = make_portable(ALEXA_ONNX.read_bytes())
-        assert make_portable(once) == once
+        once = make_portable(ALEXA_ONNX.read_bytes(), rewrite_hybrid=False)
+        assert make_portable(once, rewrite_hybrid=False) == once
 
 
 def _synthetic_model() -> bytes:
