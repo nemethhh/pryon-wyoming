@@ -7,7 +7,7 @@ need your own unpacked Echo system image.
 
 ## Build
 
-`build.sh` cross-compiles `pryon_test.c` with Android NDK r21e against the
+`build.sh` (with `ANDROID_NDK_ROOT` set to Android NDK r21e) cross-compiles `pryon_test.c` against the
 rootfs's `libpryon.so` and writes `build/oracle/pryon_test`
 (see the header of `Makefile` for the pinned recipe).
 

@@ -59,7 +59,7 @@ class GraphRunner:
         # streaming conv buffers, passed through unchanged
         self._lstm: list[tuple[str, str]] = []
         self._buffers: list[tuple[str, str]] = []
-        for inp, out in zip(model_set.state_inputs, model_set.state_outputs):
+        for inp, out in zip(model_set.state_inputs, model_set.state_outputs, strict=True):
             if out not in out_names:
                 raise ValueError(f"state output {out!r} missing from graph")
             target = self._lstm if len(self._input_shapes[inp]) == 2 else self._buffers

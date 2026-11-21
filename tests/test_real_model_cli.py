@@ -9,9 +9,6 @@ import wave
 from pathlib import Path
 
 import numpy as np
-import pytest
-
-from pypryon import Spotter
 
 from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
 

@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 
 from pypryon import Spotter
+
 from synthmodel import build_model_dir
 
 NOISE = (np.random.default_rng(5).normal(0, 3000, 16000 * 10)).astype(np.int16)

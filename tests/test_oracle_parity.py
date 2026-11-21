@@ -10,7 +10,6 @@ PYPRYON_ORACLE_ROOTFS set the live oracle must still reproduce them.
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -115,7 +114,7 @@ def test_spotter_matches_live_oracle(live_oracle, synthetic_clips) -> None:
         if len(dets) != len(refs):
             errors.append(f"{name}: {len(dets)} events vs oracle {len(refs)}")
             continue
-        for det, ref in zip(dets, refs):
+        for det, ref in zip(dets, refs, strict=True):
             _assert_event_parity(det, ref, thresholds, name, errors, boundary)
     for line in boundary:
         print(f"boundary: {line}")
@@ -136,7 +135,7 @@ def test_spotter_matches_committed_fixtures_offline(synthetic_clips) -> None:
         if len(dets) != len(refs):
             errors.append(f"{name}: {len(dets)} events vs fixture {len(refs)}")
             continue
-        for det, ref in zip(dets, refs):
+        for det, ref in zip(dets, refs, strict=True):
             _assert_event_parity(det, ref, thresholds, name, errors, boundary)
     for line in boundary:
         print(f"boundary: {line}")

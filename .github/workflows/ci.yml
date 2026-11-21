@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        python: ["3.10", "3.13"]
+        include:
+          - runner: ubuntu-24.04
+            python: "3.14"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Lint
+        run: uv run --python ${{ matrix.python }} ruff check .
+      - name: Test
+        run: uv run --python ${{ matrix.python }} pytest -q
+
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the add-on image
+        run: make image
+      - name: The image carries no model
+        run: |
+          found=$(docker run --rm --entrypoint sh pypryon-addon -c \
+            'find / -xdev \( -name "*.onnx" -o -name "*.raw" -o -name pryon.manifest \) 2>/dev/null | grep -v site-packages' || true)
+          test -z "$found" || { echo "unexpected model files: $found"; exit 1; }
+      - name: Server starts and reports a missing model
+        run: |
+          set +e
+          out=$(docker run --rm --entrypoint /opt/venv/bin/pypryon-wyoming pypryon-addon --models-dir /share/pypryon 2>&1)
+          code=$?
+          echo "$out"
+          test "$code" = 1 && echo "$out" | grep -q "no Pryon model found under /share/pypryon"

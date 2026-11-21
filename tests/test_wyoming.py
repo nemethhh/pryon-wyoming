@@ -17,10 +17,11 @@ from wyoming.event import async_write_event
 from wyoming.info import Describe, Info
 from wyoming.wake import Detect, Detection, NotDetected
 
-from conftest import REPO_ROOT
 from pypryon import Spotter
 from pypryon.wyoming.models import load_all, parse_thresholds
 from pypryon.wyoming.server import PryonWakeHandler, make_info
+
+from conftest import REPO_ROOT
 from synthmodel import build_model_dir
 
 NOISE = (np.random.default_rng(5).normal(0, 3000, 16000 * 6)).astype(np.int16)
@@ -120,7 +121,7 @@ def test_converts_48k_stereo_audio(models_dir) -> None:
     got = [Detection.from_event(e).timestamp for e in events if Detection.is_type(e.type)]
     want = [i * 1000 // 16000 for i in _expected_accept_samples(models_dir)]
     assert len(got) == len(want)
-    assert all(abs(g - w) <= 80 for g, w in zip(got, want))
+    assert all(abs(g - w) <= 80 for g, w in zip(got, want, strict=True))
 
 
 def test_two_clients_independent_and_disconnect(models_dir) -> None:

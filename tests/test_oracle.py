@@ -10,7 +10,6 @@ import pytest
 
 from pryon_oracle import OracleError, parse_detections, run_oracle
 
-
 REAL_ORACLE_OUTPUT = r"""attributes: {"object_type_name":"pryon_library_attributes","object_type_version":1,"pryon_library_engine_compatibility_info":{"aed_ecids":[1,2,3,5,6,7],"enrollment_profile_current_ecid":2,"enrollment_profile_earliest_supported_ecid":1,"fingerprint_ecids":[1,2,3,4],"interaction_context_sdsm_current_ecid":1,"interaction_context_sdsm_earliest_supported_ecid":1,"mutable_model_current_ecid":5,"mutable_model_earliest_supported_ecid":5,"ntt_dvad_ecids":[1,2,3,4,5,6,7,8,9,10],"pryon_engine_uuid":"da5620af-cace-58d0-ae0d-39724cc0b2a8","speaker_id_model_current_ecid":3,"speaker_id_model_earliest_supported_ecid":3,"supplemental_model_current_ecid":5,"supplemental_model_earliest_supported_ecid":4,"version":1,"wakeword_ecids":[1,2,4,5,6,7,8,9,10,11,12,13,14,15,16,17,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37]},"pryon_library_version_info":{"atlas":"","build_type":"Release","compiler":"Clang 12.0.9","git_version":"UNKNOWN-2.41-gUNKNOWN","host_platform":"x86_64-Linux-4.14.355-280.710.amzn2.x86_64","target_platform":"armv7-a-Android-1","uuid":"da5620af-cace-58d0-ae0d-39724cc0b2a8","version":2}}
 format: enc=0 rate=16000 bits=16 ch=1 type0=0
 pryon[4] INFO: The log label 'KWS' should be defined before calling AssignThreadLoggerByLabel!

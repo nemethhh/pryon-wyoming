@@ -1,21 +1,20 @@
-# virtualenv
+# environments and caches
 venv/
-
-# python build/cache artifacts
+.venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 build/
 dist/
-
-# test caches
 .pytest_cache/
+.ruff_cache/
+.cache/
+.pypryon-cache/
 
-# agent working state (plans/reports)
+# local agent working state
 .superpowers/
 
-# model-artifact hazards: no Amazon-derived bytes in git (local models, captures,
-# unpacked firmware stay on disk only)
+# no Amazon-derived bytes in git: models, captures and firmware stay on disk
 local-data/
 *.onnx
 *.raw

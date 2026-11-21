@@ -324,7 +324,7 @@ def _rewrite_hybrid_conv(graph, node, arrays) -> list:
     sub = site.t("tsub")
     nd.append(site.node("Sub", [t_dim, site.init(np.array([kh], np.int64), "kh")], [sub]))
     div = site.t("tdiv")
-    nd.append(site.node("Div", [div0 := sub, site.init(np.array([sh], np.int64), "sh")], [div]))
+    nd.append(site.node("Div", [sub, site.init(np.array([sh], np.int64), "sh")], [div]))
     mul = site.t("tmul")
     nd.append(site.node("Mul", [div, site.init(np.array([sh], np.int64), "sh2")], [mul]))
     e_end = site.t("eend")
@@ -419,17 +419,14 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     # ---- Loop body: one LSTM step, cell math in float64 (Model.lstm_cell).
     body = _Site(node.name + "__body")
     bn: list = []
-    vi = lambda n, t_, s: onnx.helper.make_tensor_value_info(n, t_, s)
+    def vi(name, elem, shape):
+        return onnx.helper.make_tensor_value_info(name, elem, shape)
+
     b_iter = vi("_iter", T.INT64, [])
     b_cond = vi("_cond", T.BOOL, [])
     b_h = vi("_h", T.FLOAT, [LANES, hid])
     b_c = vi("_c", T.FLOAT, [LANES, hid])
     b_x = vi("_x", T.FLOAT, [None, None, n_in])
-    b_ocond = vi("_ocond", T.BOOL, [])
-    b_oh = vi("_oh", T.FLOAT, [LANES, hid])
-    b_oc = vi("_oc", T.FLOAT, [LANES, hid])
-    b_ox = vi("_ox", T.FLOAT, [None, None, n_in])
-    b_oy = vi("_oy", T.FLOAT, [1, LANES, hid])
 
     it_c = body.t("iter")
     bn.append(body.node("Unsqueeze", ["_iter"], [it_c], axes=[0]))
@@ -452,17 +449,15 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     bn.append(body.node("Add", [g64, i_wb], [gw]))
     g = body.t("g")
     bn.append(body.node("Add", [gw, i_rb], [g]))                      # f64 [lanes, 4*hid]
-    sl = lambda tag, s0: (body.init(np.array([s0], np.int64), f"s{tag}0"),
-                          body.init(np.array([s0 + hid], np.int64), f"s{tag}1"),
-                          body.init(np.array([1], np.int64), f"a1{tag}"))
-    gi = body.t("gi"); a, e, ax = sl("i", 0)
-    bn.append(body.node("Slice", [g, a, e, ax], [gi]))
-    go = body.t("go"); a, e, ax = sl("o", hid)
-    bn.append(body.node("Slice", [g, a, e, ax], [go]))
-    gf = body.t("gf"); a, e, ax = sl("f", 2 * hid)
-    bn.append(body.node("Slice", [g, a, e, ax], [gf]))
-    gc = body.t("gc"); a, e, ax = sl("c", 3 * hid)
-    bn.append(body.node("Slice", [g, a, e, ax], [gc]))
+    gates = []
+    for k, tag in enumerate("iofc"):
+        start = body.init(np.array([k * hid], np.int64), f"s{tag}0")
+        end = body.init(np.array([(k + 1) * hid], np.int64), f"s{tag}1")
+        axis = body.init(np.array([1], np.int64), f"a1{tag}")
+        gate = body.t(f"g{tag}")
+        bn.append(body.node("Slice", [g, start, end, axis], [gate]))
+        gates.append(gate)
+    gi, go, gf, gc = gates
     sig_i, sig_o, sig_f = body.t("si"), body.t("so"), body.t("sf")
     bn.append(body.node("Sigmoid", [gi], [sig_i]))
     bn.append(body.node("Sigmoid", [go], [sig_o]))

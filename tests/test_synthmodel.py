@@ -10,10 +10,11 @@ import numpy as np
 import onnx
 import pytest
 
-from conftest import REPO_ROOT
 from pypryon.graph import make_portable
 from pypryon.modelset import load_model_set
 from pypryon.runner import GraphRunner
+
+from conftest import REPO_ROOT
 from synthmodel import build_model_dir
 from test_graph_surgery import _checker_minus_hybrid, _int32_shape_inputs, _load_and_classify
 

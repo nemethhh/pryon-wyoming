@@ -5,11 +5,9 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-import pytest
 
 from pypryon.graph import make_portable
 
@@ -51,7 +49,7 @@ def test_ort_loads_and_runs_25_zero_frames() -> None:
     feeds = _zero_states()
     feeds["input_feats"] = np.zeros((1, 25, 64, 1), np.float32)
     names = [o.name for o in sess.get_outputs()]
-    out = dict(zip(names, sess.run(None, feeds)))
+    out = dict(zip(names, sess.run(None, feeds), strict=True))
 
     # 25 input frames -> 4 LSTM steps through the 6:1 streaming conv stack
     # (conv1 T=6+N, maxpool /2, conv2 /3 -> N//6).
@@ -110,7 +108,7 @@ def test_layer_parity_vs_vendor_emulation() -> None:
         feeds["input_h_se"], feeds["input_c_se"] = h_in_se, c_in_se
 
         names = [o.name for o in sess.get_outputs()]
-        got = dict(zip(names, sess.run(None, feeds)))
+        got = dict(zip(names, sess.run(None, feeds), strict=True))
         want = next(stream)
 
         np.testing.assert_allclose(

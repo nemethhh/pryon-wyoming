@@ -1,6 +1,6 @@
 /*
  * pypryon oracle harness — verbatim copy (only this header added) of
- * src/tools/pryon_test.c from echo-dot-assist (github.com/BenStein1/echo-dot-assist),
+ * src/tools/pryon_test.c from echo-dot-assist (github.com/Gamer92000/echo-dot-assist),
  * the wake-word test tool that upstream PR #171 (pryon-native) builds as its
  * reproducible review harness. See tools/oracle/Makefile for the pinned recipe.
  */

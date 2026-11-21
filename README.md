@@ -1,97 +1,118 @@
-# pypryon
+# pryon-wyoming
 
-Run Amazon's Pryon wake-word models — the keyword dirs shipped in Echo
-firmware and DAVS downloads — on any machine with Python and stock
-`onnxruntime`. No ARM library, no Amazon code: the shipped ONNX's custom
-`Hybrid*` kernels are rewritten into standard ops implementing the measured
-CPUNK quantization contract, and the whole pipeline (LFBE front end, 25-lane
-LSTM ring, kw.cfg orchestra decoder) is reimplemented in numpy.
+Amazon's own Echo wake-word engine — the **Pryon** keyword models that ship in Echo firmware — running on any
+machine with Python and stock [onnxruntime](https://onnxruntime.ai), and served to Home Assistant's Assist as a
+[Wyoming](https://github.com/OHF-Voice/wyoming) wake word service.
 
-Detections are validated against the **real** `libpryon.so` under
-qemu-arm (the pinned `pryon_test` oracle): identical events on the test
-clip set, scores within 1e-3 for events clear of the thresholds
-(knife-edge events within 1e-2 of a threshold are logged as `boundary`,
-per the design's margin rule).
+No Amazon code and no Amazon models are included: you extract the model from firmware of a device you own. The
+custom `Hybrid*` kernels of the shipped ONNX graph are rewritten into standard ONNX ops implementing the measured
+quantization arithmetic, and the rest of the engine (front end, LSTM lane ring, keyword decoder) is reimplemented
+in NumPy. Detections are checked against the real `libpryon.so` (see [How it is validated](#how-it-is-validated)).
 
-## Usage
+## Home Assistant add-on
+
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fnemethhh%2Fpryon-wyoming)
+
+Or: Settings → Add-ons → Add-on Store → ⋮ → Repositories → `https://github.com/nemethhh/pryon-wyoming`.
+Copy your model directory to `/share/pypryon/ALEXA/`, then install **Pryon wake word**; see its
+[documentation](pypryon/DOCS.md).
+
+## Other installs
+
+Any machine Home Assistant can reach (Python 3.10+):
+
+```sh
+uv tool install "pypryon[zeroconf] @ git+https://github.com/nemethhh/pryon-wyoming"
+pypryon-wyoming --models-dir ~/pryon-models --zeroconf      # serves every <dir>/<NAME>/pryon.manifest
+```
+
+Home Assistant discovers it with `--zeroconf`; otherwise add the **Wyoming Protocol** integration with this host
+and port 10400. Every flag has an environment variable (`PYPRYON_URI`, `PYPRYON_MODELS_DIR`,
+`PYPRYON_THRESHOLDS`, `PYPRYON_ZEROCONF`, `PYPRYON_DEBUG`); `--threshold ALEXA=0.88` overrides a keyword's
+accept threshold. The add-on image also runs standalone:
+
+```sh
+docker run -d -p 10400:10400 -v ~/pryon-models:/models:ro \
+  --entrypoint /opt/venv/bin/pypryon-wyoming ghcr.io/nemethhh/amd64-addon-pypryon --models-dir /models
+```
+
+## Getting a model directory
+
+A model directory is what Echo firmware keeps under `/system/local/models/keyword/<locale>/<NAME>/`:
+`pryon.manifest`, `pryon.config`, `nemort_scorer_config.json`, `kw.cfg.json`, `words.shrunk.txt` and
+`runtime_stateless_standard.streaming.fixed.int16.onnx` (other files there are ignored). To get it from an
+update image of a device you own:
+
+1. Download the device's OTA package.
+2. Unpack its payload into partition images (e.g. with `payload-dumper-go`).
+3. Copy the directory out of the system image (`debugfs`, or `mount -o loop,ro`).
+
+Supported: the nemort-ONNX keyword generation (e.g. Echo Dot 3rd gen firmware, `ALEXA` with keywords ALEXA and
+STOP). Not yet: DAVS-downloaded multi-graph models, and the older Kaldi-FST generation.
+
+## Python library
 
 ```python
 from pypryon import Spotter
 
-sp = Spotter("…/keyword/en-US/ALEXA/")   # an extracted model directory
-for chunk in mic_chunks_16k_s16:         # int16 mono 16 kHz, any size
-    for det in sp.feed(chunk):
-        print(det.keyword, det.type_name, det.score,
-              det.begin_sample, det.end_sample)
-sp.scores_tail()                          # {"ALEXA": 0.93, "STOP": 0.01}
-sp.set_client_property("AlarmState", 1)   # kw.cfg threshold overrides
+spotter = Spotter("~/pryon-models/ALEXA")          # thresholds={"ALEXA": 0.88} to override
+for chunk in mic_chunks:                           # int16, mono, 16 kHz, any chunk size
+    for det in spotter.feed(chunk):
+        print(det.keyword, det.type_name, round(det.score, 3), det.begin_sample, det.end_sample)
+spotter.last_scores                                # per-cycle classifier scores of the last feed
+spotter.set_client_property("AlarmState", 1)       # kw.cfg threshold overrides
 ```
 
-Input contract: **int16, mono, 16 kHz**, 1-D arrays. A sample rate cannot
-be detected from raw PCM — anything else silently shifts every index and
-score.
+Input is **int16 mono 16 kHz**; a sample rate cannot be detected from raw PCM, so anything else silently shifts
+every index and score. Detection types are Accept and NearMiss (a run that peaked above the notify threshold);
+scores are kw.cfg classifier scores, so compare them with the model's thresholds (`spotter.thresholds`, 0.923
+for ALEXA), not with openWakeWord's habitual 0.5.
 
-Beside [openWakeWord](https://github.com/dscripka/openWakeWord):
-
-```python
-from pypryon.oww import PryonModel
-
-m = PryonModel("…/ALEXA/")                # predict(x) → {"ALEXA": 0.93, …}
-scores = [m.predict(frame) for frame in frames_80ms]
-dets = m.detections                       # consumed on read
-```
-
-CLI:
+Command line:
 
 ```
-pypryon run   <model_dir> <audio.(raw|wav16k)> [--scores]
-pypryon convert <model_dir>               # portable ONNX → .pypryon-cache/
+pypryon run <model_dir> <audio.wav|audio.raw> [--scores] [--chunk N]
+pypryon convert <model_dir> [-o model.onnx]     # the stock-onnxruntime graph
 ```
 
-`run` prints one line per detection; `convert` writes the stock-ONNX
-version of the graph to `.pypryon-cache/` under the current directory
-(never next to the model — model dirs are firmware extractions and often
-read-only).
+## How it is validated
 
-## Getting a model directory
+- **Oracle parity.** `tools/oracle/` runs Amazon's `libpryon.so` itself under `qemu-arm`. On an espeak "Alexa"
+  clip and synthetic negatives, pypryon produces the same events (keyword, type, begin/end sample) with scores
+  within 1e-3 of the library's (events within 1e-2 of a threshold are reported, not failed). The parsed oracle
+  runs are committed in `tests/fixtures/`.
+- **Arithmetic parity.** Every rewritten kernel is compared with the vendored NumPy emulation of the device's
+  quantized arithmetic (`vendor/pryon-native`).
+- **CI without Amazon bytes.** A synthetic model with the same graph structure, exporter quirks and file layout
+  (random weights, built at test time) exercises the loader, the graph rewrite, the runner, the CLI and the
+  Wyoming server on every push.
 
-Extract your own firmware (no model bytes ship with this package):
+## Development
 
-1. **FTVDB**: fetch a device OTA bin (e.g. Echo Dot "donut" NS65741).
-2. **payload extraction**: `payload-dumper-go` / Android `payload_dumper`
-   unpacks the OTA payload to images.
-3. **debugfs** (or `mount -o loop`): pull
-   `/system/local/models/keyword/en-US/ALEXA/` out of the system image —
-   it should contain `pryon.manifest`, `pryon.config`, `kw.cfg.json`,
-   `words.shrunk.txt`, `nemort_scorer_config.json` and
-   `runtime_stateless_standard.streaming.fixed.int16.onnx`.
+```sh
+uv sync                                       # dev environment
+make test                                     # firmware-free suite
+PYPRYON_MODEL_DIR=~/pryon-models/ALEXA make test   # plus the real-model tests
+make image && PYPRYON_MODEL_DIR=… make smoke  # add-on image, then stream the espeak clip through it
+```
 
-DAVS-downloaded model dirs (the multi-graph NTT-fusion generation) are a
-follow-up (M4) and not yet supported.
+The live-oracle tests also need `PYPRYON_ORACLE_ROOTFS` and a built harness; see
+[tools/oracle/README.md](tools/oracle/README.md). `tools/wyoming_client.py HOST PORT clip.wav` streams a WAV to
+any Wyoming wake word server.
 
-## Legal
+## Legal and provenance
 
-Personal-use extraction of models your own devices run is the premise
-(same stance as the rest of this repo, EFF DMCA §1201 voice-assistant
-exemption). This package is **code only**: no Amazon-derived bytes — no
-models, weights, firmware or audio — are redistributed here or belong in
-its git history. Test fixtures are derived data (parsed detection JSON);
-synthetic clips are generated deterministically by `tools/make_clips.py`.
+This repository is code only: no Amazon models, weights, firmware or recordings are part of it, its history or its
+images, and the add-on never downloads them. Extract models only from devices you own and do not redistribute
+them.
 
-## Provenance & credits
+The reverse-engineering record this builds on — front end, quantization rule, LSTM lane contract, decoder rule — is
+the pryon-native toolkit by BenStein1 ([echo-dot-assist PR #171](https://github.com/Gamer92000/echo-dot-assist/pull/171),
+MIT), vendored unmodified under `vendor/pryon-native/` (see [vendor/PROVENANCE.md](vendor/PROVENANCE.md)).
+Original here: the standard-ONNX port of the `Hybrid*` kernels, the NumPy front end, streaming runner and decoder,
+the keyword-start derivation, the Wyoming server and the add-on.
 
-- The RE substrate — LFBE semantics, the CPUNK per-row quantization rule,
-  the 25-lane LSTM ring contract, the decoder rule — is vendored from
-  PR #171 of the echo-dot-assist project (BenStein1), pinned at commit
-  `dd56117` under `vendor/pryon-native/` with its
-  [LEDGER](vendor/pryon-native/LEDGER.md) and third-party notices; MIT.
-  Every engine-derived constant in `pypryon/` carries a provenance comment
-  (vendor LEDGER section, model file, or oracle log).
-- The oracle harness (pinned `pryon_test` build, qemu-arm + qrun.sh) and
-  firmware come from the sibling `echo-dot-assist` checkout.
-- Original work here: the stock-ONNX port of the Hybrid* kernels
-  (`pypryon/graph.py`), the numpy LFBE front end, the streaming runner and
-  decoder, the kwSampleStartIndex derivation, and the packaged API.
+"Amazon", "Alexa" and "Echo" are trademarks of Amazon.com, Inc. or its affiliates; this project is not affiliated
+with or endorsed by Amazon.
 
-See `recovery-notes/pypryon-design.md` in the parent repo for the design,
-and `docs/` there for the RE record.
+MIT licensed, see [LICENSE](LICENSE).

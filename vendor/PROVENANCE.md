@@ -7,14 +7,12 @@ No Amazon source code or bytes are included (see its `README.md` and `LEDGER.md`
 
 Facts recorded per the vendoring decision:
 
-- **Upstream change:** PR #171 of the host repository
-  (github.com/BenStein1/echo-dot-assist, the pryon-native research branch).
-- **Vendored commit:** `dd56117`.
-- **Source tarball:** `backups/pryon-native-dd56117.tar.gz` (layout
-  `tools/pryon-native/...`, extracted with `--strip-components=1` into
-  `vendor/` so the content sits at `vendor/pryon-native/`).
-- **Tarball sha256:** `5220c222704aa0458667754f9da8b984822ed7ddb97ba2dd26ea778f27a27801`
-  (verified with `sha256sum` before extraction and recording).
+- **Upstream:** <https://github.com/Gamer92000/echo-dot-assist> (MIT),
+  [pull request #171](https://github.com/Gamer92000/echo-dot-assist/pull/171) by BenStein1
+  ("Document and reproduce Pryon's native inference pipeline"), directory `tools/pryon-native/`.
+- **Vendored commit:** `dd56117`, copied unmodified to `vendor/pryon-native/`.
+- **Snapshot tarball sha256:** `5220c222704aa0458667754f9da8b984822ed7ddb97ba2dd26ea778f27a27801`
+  (a tarball of that directory at `dd56117`, verified before extraction).
 - **License:** the host repository is MIT-licensed; that MIT license applies to
   the vendored code (this project's top-level `LICENSE` is the pypryon package's
   own MIT license). Third-party components inside the snapshot are covered by
@@ -25,15 +23,14 @@ Facts recorded per the vendoring decision:
 
 ## Firmware-free test suite
 
-Runs in this project's venv (numpy / onnx / onnxruntime / pytest installed):
+With the project's dev environment (`uv sync`):
 
-    PYTHONPATH=vendor/pryon-native venv/bin/python -m unittest discover -s vendor/pryon-native/tests -p 'test_l*.py' -v
+    PYTHONPATH=vendor/pryon-native uv run python -m unittest discover -s vendor/pryon-native/tests -p 'test_l*.py' -v
 
 The `-p 'test_l*.py'` pattern selects exactly the firmware-free modules of this
 snapshot (`test_lfbe_frontend.py`, `test_lstm_contract.py`) and skips
 `test_pryon_runtime_capture.py`, which needs the unpacked firmware image and
-`qemu-arm` (it drives the Pryon engine under a debugger) and is not runnable
-from this repo.
+`qemu-arm` (it drives the Pryon engine under a debugger).
 
 ## Quantizer note (from upstream maintainer review, carried with the pin)
 

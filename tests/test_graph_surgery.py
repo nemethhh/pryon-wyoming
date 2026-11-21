@@ -3,13 +3,9 @@ is onnx.checker clean and ORT refuses it only over the unknown Hybrid* ops.
 """
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
 import numpy as np
 import onnx
 import onnxruntime as ort
-import pytest
 from onnx import helper, numpy_helper
 
 from pypryon.graph import ORT_LOAD_ERROR_HYBRID, make_portable
@@ -109,7 +105,7 @@ class TestAlexaSurgery:
         new_ops = [n for n in graph.node if n.op_type != "Cast"]
         assert [(n.name, n.op_type) for n in new_ops] == \
             [(n.name, n.op_type) for n in orig_ops]
-        for ours, theirs in zip(new_ops, orig_ops):
+        for ours, theirs in zip(new_ops, orig_ops, strict=True):
             if theirs.op_type.startswith("Hybrid"):
                 assert ours.input == theirs.input, ours.name
 

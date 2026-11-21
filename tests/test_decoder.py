@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-from pypryon.decoder import Detection, Orchestra
+from pypryon.decoder import Orchestra
 from pypryon.modelset import KeywordSpec, load_model_set
 
 from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
@@ -136,7 +135,6 @@ def test_parity_vs_vendor_decoder() -> None:
     os.environ["PRYON_MODEL"] = str(MODEL_DIR / "runtime_stateless_standard.streaming.fixed.int16.onnx")
     sys.path.insert(0, str(REPO_ROOT / "vendor/pryon-native"))
     from pryon_decoder import decode as vendor_decode
-    from pryon_quant_model import Model
 
     from pypryon.fe import lfbe_frames
     from pypryon.runner import GraphRunner
@@ -152,7 +150,7 @@ def test_parity_vs_vendor_decoder() -> None:
 
     alexa = [e for e in mine if e.keyword == "ALEXA"]
     assert len(alexa) == len(want)
-    for evt, (vtype, vscore, _vsample, vcycle) in zip(alexa, want):
+    for evt, (vtype, vscore, _vsample, vcycle) in zip(alexa, want, strict=True):
         assert evt.detection_type == vtype
         assert evt.score == pytest.approx(vscore, abs=1e-12)
         assert evt.peak_frame == vcycle

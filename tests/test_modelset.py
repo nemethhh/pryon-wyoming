@@ -2,7 +2,6 @@
 error path on a minimal hand-built set.
 """
 import json
-import os
 from pathlib import Path
 
 import pytest
@@ -37,7 +36,6 @@ EXPECTED_STATE_OUTPUTS = [
 
 def _tiny_onnx_bytes() -> bytes:
     """A minimal ONNX with the input/state/output names the synthetic set declares."""
-    import onnx
     from onnx import TensorProto, helper
 
     graph = helper.make_graph(

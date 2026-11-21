@@ -4,7 +4,6 @@ oracle's Accept 0.936928 @ 22240..32640 and NearMiss 0.913608 @ 61760..89920.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import numpy as np
@@ -40,7 +39,7 @@ def test_matches_oracle_fixture(events) -> None:
     thresholds = [t for t in (spec.accept, spec.notify) if t is not None]
     got = [e for e in events if e.keyword == "ALEXA"]
     assert len(got) == len(want), got
-    for evt, ref in zip(got, want):
+    for evt, ref in zip(got, want, strict=True):
         assert by_type[evt.detection_type] == ref["detection_type"]
         # knife-edge rule: margin to ANY active threshold
         margin = min(abs(ref["classifier_score"] - t) for t in thresholds)

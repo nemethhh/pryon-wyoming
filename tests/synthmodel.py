@@ -270,7 +270,7 @@ def _single(g: _Graph, inputs, outputs) -> bytes:
 def hybrid_gemm_graph(w, sw, zw, k: int) -> bytes:
     g = _Graph(np.random.default_rng(0))
     sums = w.astype(np.int32).sum(axis=1)
-    y = g.op("HybridGemm", ["x", g.init(w, "w"), g.init(sw, "sw"), g.init(zw, "zw"),
+    g.op("HybridGemm", ["x", g.init(w, "w"), g.init(sw, "sw"), g.init(zw, "zw"),
                             g.init(sums, "sums")])[0]
     g.nodes[-1].output[0] = "y"
     return _single(g, [_vi("x", T.FLOAT, ["M", k])], [_vi("y", T.FLOAT, ["M", w.shape[0]])])

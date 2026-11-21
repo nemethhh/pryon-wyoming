@@ -1,6 +1,6 @@
 /*
  * pypryon oracle harness — verbatim copy (only this header added) of
- * src/include/pryon_api.h from echo-dot-assist (github.com/BenStein1/echo-dot-assist),
+ * src/include/pryon_api.h from echo-dot-assist (github.com/Gamer92000/echo-dot-assist),
  * the recovered libpryon API subset that upstream PR #171 (pryon-native) builds its
  * review harness against. See tools/oracle/Makefile for the pinned recipe.
  */

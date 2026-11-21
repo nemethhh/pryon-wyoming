@@ -8,11 +8,17 @@ import numpy as np
 import onnxruntime as ort
 import pytest
 
-from conftest import REPO_ROOT
 from pypryon.graph import make_portable
 from pypryon.modelset import ModelError
-from synthmodel import LANES, batchnorm_graph, hybrid_conv_graph, hybrid_gemm_graph, \
-    hybrid_lstm_graph
+
+from conftest import REPO_ROOT
+from synthmodel import (
+    LANES,
+    batchnorm_graph,
+    hybrid_conv_graph,
+    hybrid_gemm_graph,
+    hybrid_lstm_graph,
+)
 
 sys.path.insert(0, str(REPO_ROOT / "vendor/pryon-native"))
 from pryon_quant_model import Model, quant_matmul  # noqa: E402
