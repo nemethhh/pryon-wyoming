@@ -97,3 +97,24 @@ def test_davs_clips_match_oracle() -> None:
         spotter.reset()
         errors += [f"{wav.stem}: {e}" for e in _parity(spotter.feed(load_wav16(wav)), refs, thresholds)]
     assert errors == []
+
+
+@requires_davs
+@pytest.mark.parametrize("prop", ["AlarmState", "AudioPlayerState"])
+def test_override_matches_oracle(prop) -> None:
+    from pryon_oracle import run_oracle_cached
+
+    if CLIPS_DIR is None:
+        pytest.skip("no parity clips")
+    spotter = Spotter(DAVS_MODEL_DIR)
+    thresholds = _thresholds(spotter)
+    errors = []
+    for stem in ("02-lessac-medium", "05-amy-medium", "06-amy-medium"):
+        wav = CLIPS_DIR / f"{stem}.wav"
+        if not wav.exists():
+            pytest.skip(f"{wav.name} absent")
+        refs = run_oracle_cached(wav, DAVS_MODEL_DIR, wav.parent / "oracle", {prop: 1})
+        spotter.reset()
+        spotter.set_client_property(prop, 1)
+        errors += [f"{stem}: {e}" for e in _parity(spotter.feed(load_wav16(wav)), refs, thresholds)]
+    assert errors == []

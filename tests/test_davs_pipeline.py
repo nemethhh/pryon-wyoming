@@ -96,3 +96,19 @@ def test_old_spotter_unchanged(tmp_path: Path) -> None:
     events = Spotter(build_model_dir(tmp_path / "SYNTH"), thresholds={"HEY": 1e-4}).feed(noise)
     got = [dataclasses.astuple(e) for e in events]
     assert [(k, t, round(s, 9), b, e) for k, t, s, b, e in got] == OLD_BASELINE
+
+
+def test_alexa_threshold_moves_verifier(davs_set) -> None:
+    sp = Spotter(davs_set, thresholds={"ALEXA": 0.85})
+    assert sp.thresholds == {"ALEXA": 0.85, "STOP": 0.6}
+    aux = next(s for s in sp._backend._orchestra._keywords if s.primary.name == "ALEXA").auxiliary
+    assert aux.accept == pytest.approx(0.85 + (0.898 - 0.921))
+    with pytest.raises(ValueError, match=r"'HEY_DISNEY'.*ALEXA"):
+        Spotter(davs_set, thresholds={"HEY_DISNEY": 0.5})
+
+
+def test_davs_spotter_serves_alexa_and_stop(davs_set) -> None:
+    sp = Spotter(davs_set)
+    assert sp.keywords == ["STOP", "ALEXA"]
+    sp.feed(np.zeros(16000, np.int16))
+    assert set(sp.last_scores) == {"STOP", "ALEXA"}
