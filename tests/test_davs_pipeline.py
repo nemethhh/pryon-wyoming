@@ -109,6 +109,6 @@ def test_alexa_threshold_moves_verifier(davs_set) -> None:
 
 def test_davs_spotter_serves_alexa_and_stop(davs_set) -> None:
     sp = Spotter(davs_set)
-    assert sp.keywords == ["STOP", "ALEXA"]
+    assert sp.keywords == ["ALEXA", "STOP"]   # word-id order: the wake word first
     sp.feed(np.zeros(16000, np.int16))
     assert set(sp.last_scores) == {"STOP", "ALEXA"}

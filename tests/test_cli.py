@@ -11,6 +11,8 @@ import numpy as np
 import onnxruntime as ort
 import pytest
 
+from pypryon import __version__
+
 from conftest import REPO_ROOT
 from synthmodel import build_model_dir
 
@@ -43,7 +45,7 @@ def _last_line(stderr: str) -> str:
 def test_version_flag() -> None:
     proc = _cli("--version")
     assert proc.returncode == 0
-    assert proc.stdout.strip() == "pypryon 0.1.0"
+    assert proc.stdout.strip() == f"pypryon {__version__}"
 
 
 def test_run_synthetic_wav(synth_dir, tmp_path) -> None:

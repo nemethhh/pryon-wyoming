@@ -13,8 +13,11 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
    or Advanced SSH add-on. It must contain at least:
    `pryon.manifest`, `pryon.config`, `nemort_scorer_config.json`, `kw.cfg.json`, `words.shrunk.txt` and the
    `.onnx` file named in `nemort_scorer_config.json`.
-   In Echo firmware they live in `/system/local/models/keyword/<locale>/<NAME>/` (see the
-   [README](https://github.com/nemethhh/pryon-wyoming#getting-a-model-directory)).
+   In Echo firmware they live in `/system/local/models/keyword/<locale>/<NAME>/`. Newer DAVS sets
+   (Amazon's downloaded wake words, e.g. `alexa-en-US`) are directories of subdirectories (`encoder/`,
+   `alexa-wakeworddecoder/`, `BDPGeneratedFiles/`, …) with a `pryon.manifest` at the top; copy the whole
+   directory (see the [README](https://github.com/nemethhh/pryon-wyoming#getting-a-model-directory)).
+   If two directories offer the same wake word, the DAVS set is used.
    Each directory under `/share/pypryon` is loaded; every keyword in it becomes a wake word
    (the ALEXA directory offers `alexa` and `stop`). A keyword found in two directories is served from the
    first one only.
@@ -37,8 +40,8 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
 
 - **The add-on stops at start with `no Pryon model found under /share/pypryon`**: the model directory is missing
   or misplaced; the log names the path it searched. The directory must hold `pryon.manifest` directly.
-- **`Skipping /share/pypryon/X: ...`**: that directory is not a model this version can load (for example a DAVS
-  multi-model download); the others still load.
+- **`Skipping /share/pypryon/X: ...`**: that directory is not a model this version can load; the others still
+  load. `Keyword HEY_DISNEY uses an unsupported classifier; not served` is expected for DAVS sets.
 - Detections are logged at the default level as `Detected alexa (score 0.937)`.
 
 ## Legal

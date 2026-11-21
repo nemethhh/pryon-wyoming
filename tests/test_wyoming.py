@@ -17,7 +17,7 @@ from wyoming.event import async_write_event
 from wyoming.info import Describe, Info
 from wyoming.wake import Detect, Detection, NotDetected
 
-from pypryon import Spotter
+from pypryon import Spotter, __version__
 from pypryon.wyoming.models import load_all, parse_thresholds
 from pypryon.wyoming.server import PryonWakeHandler, make_info
 
@@ -189,4 +189,35 @@ def test_cli_version() -> None:
     proc = subprocess.run([sys.executable, "-m", "pypryon.wyoming", "--version"],
                           capture_output=True, text=True, env=env)
     assert proc.returncode == 0
-    assert proc.stdout.strip() == "0.1.0"
+    assert proc.stdout.strip() == __version__
+
+
+def test_davs_dir_served(tmp_path, caplog) -> None:
+    from synthmodel import build_davs_model_dir
+
+    build_davs_model_dir(tmp_path / "models" / "DAVS")
+    with caplog.at_level(logging.WARNING):
+        models = load_all(tmp_path / "models", {})
+    assert [m.keywords for m in models] == [["ALEXA", "STOP"]]
+    assert "HEY_DISNEY" in caplog.text
+    assert [m.name for m in make_info(models).wake[0].models] == ["alexa", "stop"]
+
+
+def test_davs_wins_shared_keyword(tmp_path, caplog) -> None:
+    from synthmodel import build_davs_model_dir
+
+    build_model_dir(tmp_path / "A_OLD", keywords=("ALEXA", "STOP"))
+    build_davs_model_dir(tmp_path / "Z_DAVS")
+    with caplog.at_level(logging.WARNING):
+        models = load_all(tmp_path, {})
+    assert [(m.dir.name, m.keywords) for m in models] == [("Z_DAVS", ["ALEXA", "STOP"])]
+    assert "A_OLD" in caplog.text
+
+
+def test_davs_detection_through_server(tmp_path) -> None:
+    from synthmodel import build_davs_model_dir
+
+    build_davs_model_dir(tmp_path / "DAVS")
+    events = _run(lambda port: _stream(port, NOISE, names=["alexa"]), tmp_path, thresholds={"ALEXA": 0.01})
+    names = [Detection.from_event(e).name for e in events if Detection.is_type(e.type)]
+    assert names and set(names) == {"alexa"}

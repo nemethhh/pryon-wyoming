@@ -9,7 +9,7 @@ from .modelset import ModelError, ModelSet, load_model_set
 from .runner import GraphRunner, Posteriors
 from .spotter import ACCEPT, ACCEPT_AUXILIARY, NEAR_MISS, PryonDetection, Spotter
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "ACCEPT",

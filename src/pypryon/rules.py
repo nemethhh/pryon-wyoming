@@ -30,6 +30,7 @@ ACCEPT = 2
 NEAR_MISS = 0
 ACCEPT_AUXILIARY = 3
 NEAR_MISS_WINDOW_STEPS = 8
+_WARNED: set[tuple] = set()
 
 
 @dataclass(frozen=True)
@@ -99,7 +100,8 @@ class _Keyword:
 class DavsOrchestra:
     """Streaming decision layer over DavsPipeline outputs (keys ``"<scorer>/<component>"``)."""
 
-    def __init__(self, spotters: list[SpotterSpec], *, frames_per_step: int = 8):
+    def __init__(self, spotters: list[SpotterSpec], *, frames_per_step: int = 8,
+                 words: dict[int, str] | None = None):
         self.step_samples = frames_per_step * FRAME_SAMPLES
         primaries: dict[str, SpotterSpec] = {}
         aux: dict[str, SpotterSpec] = {}
@@ -109,10 +111,15 @@ class DavsOrchestra:
         for name, spec in primaries.items():
             kw = _Keyword(spec, aux.get(name))
             if kw.cls is None or (kw.auxiliary is not None and kw.aux_cls is None):
-                _LOGGER.warning("Keyword %s uses an unsupported classifier (%s); not served",
-                                name, spec.classifier.get("type"))
+                key = (name, spec.classifier.get("type"))
+                if key not in _WARNED:  # every connection builds an orchestra
+                    _WARNED.add(key)
+                    _LOGGER.warning("Keyword %s uses an unsupported classifier (%s); not served", *key)
                 continue
             self._keywords.append(kw)
+        if words:  # the model's word order puts the wake word first (ALEXA 1 before STOP)
+            order = {w: i for i, w in words.items()}
+            self._keywords.sort(key=lambda kw: order.get(kw.primary.name, len(order)))
         self._step = 0
         self.last_scores: dict[str, np.ndarray] = {kw.primary.name: np.zeros(0) for kw in self._keywords}
 

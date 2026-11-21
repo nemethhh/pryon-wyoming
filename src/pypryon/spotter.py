@@ -181,7 +181,8 @@ class _DavsBackend:
         from .rules import DavsOrchestra
 
         spotters = list(model_set.spotters)
-        probe = DavsOrchestra(spotters, frames_per_step=model_set.encoder.frames_per_step)
+        probe = DavsOrchestra(spotters, frames_per_step=model_set.encoder.frames_per_step,
+                              words=model_set.words)
         if thresholds:
             for name in thresholds:
                 if name not in probe.keywords:
@@ -190,9 +191,11 @@ class _DavsBackend:
             spotters = [replace(s, accept=float(thresholds[s.name]) + (s.accept - base[s.name] if s.auxiliary else 0.0))
                         if s.name in thresholds else s for s in spotters]
         self._pipeline = DavsPipeline(model_set, sessions=session)
-        self._orchestra = DavsOrchestra(spotters, frames_per_step=model_set.encoder.frames_per_step)
+        self._orchestra = DavsOrchestra(spotters, frames_per_step=model_set.encoder.frames_per_step,
+                                        words=model_set.words)
         self.keywords = self._orchestra.keywords
-        self.thresholds = {s.name: s.accept for s in spotters if not s.auxiliary and s.name in self.keywords}
+        accepts = {s.name: s.accept for s in spotters if not s.auxiliary}
+        self.thresholds = {k: accepts[k] for k in self.keywords}
         self.client_properties = dict(model_set.client_prop_defaults)
 
     @property

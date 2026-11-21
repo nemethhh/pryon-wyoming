@@ -116,8 +116,21 @@ def test_exponential_decay_spotter_accepts() -> None:
     assert events[0].score == pytest.approx(expected, abs=1e-6)   # inputs stored as float32
 
 
-def test_unsupported_classifier_keyword_skipped(caplog) -> None:
+def test_unsupported_classifier_keyword_skipped(caplog, monkeypatch) -> None:
+    import pypryon.rules as rules
+    monkeypatch.setattr(rules, "_WARNED", set())   # warnings are once per process
     spots = [_spot(), _spot(name="HEY_DISNEY", classifier={"type": "weighted-geometric-average-aggregator"})]
     orch = DavsOrchestra(spots)
     assert orch.keywords == ["ALEXA"]
     assert "HEY_DISNEY" in caplog.text
+
+
+def test_unsupported_classifier_warned_once(caplog, monkeypatch) -> None:
+    import pypryon.rules as rules
+    monkeypatch.setattr(rules, "_WARNED", set())
+    spots = [_spot(), _spot(name="ODD_WORD", classifier={"type": "some-new-aggregator"})]
+    import logging
+    with caplog.at_level(logging.WARNING):
+        DavsOrchestra(spots)
+        DavsOrchestra(spots)
+    assert caplog.text.count("ODD_WORD") == 1

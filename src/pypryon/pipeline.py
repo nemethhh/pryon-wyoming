@@ -66,9 +66,7 @@ class DavsPipeline:
     def __init__(self, model_set: DavsModelSet,
                  sessions: dict[str, tuple[ort.InferenceSession, dict]] | None = None):
         self.model_set = model_set
-        self.sessions = sessions or {
-            spec.name: create_stage_session(spec)
-            for spec in [model_set.encoder, *model_set.decoders.values()]}
+        self.sessions = sessions or create_sessions(model_set)
         self.stages = {name: StageRunner(spec, *self.sessions[name])
                        for name, spec in [(model_set.encoder.name, model_set.encoder),
                                           *model_set.decoders.items()]}
@@ -121,3 +119,9 @@ class DavsPipeline:
                 tail = [d if isinstance(d, int) else 1 for d in shapes[comp][1:]]
                 out[f"{name}/{comp}"] = np.zeros([0, *tail], np.float32)
         return out
+
+
+def create_sessions(model_set: DavsModelSet) -> dict[str, tuple[ort.InferenceSession, dict]]:
+    """Sessions for every graph of a DAVS set; shareable across Spotters."""
+    return {spec.name: create_stage_session(spec)
+            for spec in [model_set.encoder, *model_set.decoders.values()]}
