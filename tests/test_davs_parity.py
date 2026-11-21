@@ -27,8 +27,9 @@ def _parity(dets, refs, thresholds) -> list[str]:
     refs = [r for r in refs if r["keyword"] != "HEY_DISNEY"]
     errors = []
     if len(dets) != len(refs):
-        return [f"{len(dets)} events {[(d.keyword, d.type_name, round(d.score, 4), d.end_sample) for d in dets]}"
-                f" vs oracle {[(r['keyword'], r['detection_type'], r['classifier_score'], r['end_sample']) for r in refs]}"]
+        ours = [(d.keyword, d.type_name, round(d.score, 4), d.end_sample) for d in dets]
+        theirs = [(r["keyword"], r["detection_type"], r["classifier_score"], r["end_sample"]) for r in refs]
+        return [f"{len(dets)} events {ours} vs oracle {theirs}"]
     for det, ref in zip(dets, refs, strict=True):
         if (det.keyword, det.type_name, det.end_sample) != (ref["keyword"], ref["detection_type"], ref["end_sample"]):
             errors.append(f"{(det.keyword, det.type_name, det.end_sample)} vs "
