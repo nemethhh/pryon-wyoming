@@ -14,9 +14,15 @@ LEDGER §"Decoder: score and accept/near-miss rule") on the streaming side:
 * detection_type 2 = Accept, 0 = NearMiss (types 1/3 are unknown to the
   vendor rule — never synthesized here).
 
-Detection.begin_frame stays None: the keyword-begin index (kwSample*Index
-from the fc_output_se head) is not derived by the vendor rule; Task 10/11
-own that mapping against the oracle's begin/end samples.
+Detection.begin_frame derives from the fc_output_se head (the vendor's
+underived kwSampleStartIndex): at the accept/peak cycle t, over the same
+age window the score rule uses (trim-tail+1..25), take the age whose se
+posterior is maximal (column 1 of fc_output_se — empirically the utterance
+start column; kw.cfg's scorer-index naming is swapped against observed
+behavior) and set begin_frame = 6*(t - a* + 1) + 1.  Fitted on the two
+live-oracle espeak events (begin 22240 = 960*23+160, 61760 = 960*64+160)
+and re-validated by Task 11's parity suite; end_frame stays the vendor
+rule (6*(t+1) for accepts, +keyword-feature-window for near-misses).
 """
 from __future__ import annotations
 
@@ -40,6 +46,19 @@ class Detection:
     peak_frame: int            # engine cycle of the peak
     begin_frame: int | None    # LFBE frame; None until the se derivation
     end_frame: int             # LFBE frame (see module docstring)
+
+
+SE_START_COLUMN = 1   # fc_output_se column of the utterance-start posterior
+
+
+def keyword_begin_frame(se_lanes_row: np.ndarray, t: int, trim_tail: int) -> int:
+    """kwSampleStartIndex rule: age-argmax of the start posterior over the
+    score rule's age window, mapped to the age's absolute cycle (+1 frame,
+    the engine's frame phase — see module docstring provenance)."""
+    ages = np.arange(trim_tail + 1, 26)
+    priors = se_lanes_row[(t - ages + 1) % 25, SE_START_COLUMN]
+    a = ages[int(np.argmax(priors))]
+    return 6 * (t - a + 1) + 1
 
 
 def cycle_score(lanes_row: np.ndarray, t: int, class_index: int,
@@ -90,15 +109,19 @@ class Orchestra:
         client_props = client_props or {}
         events: list[Detection] = []
         lanes = posteriors.lanes
+        se_lanes = posteriors.se_lanes
+        if se_lanes is None:
+            se_lanes = np.zeros(lanes.shape[:2] + (2,), np.float32)
         for row in range(lanes.shape[0]):
             t = self._cycle + row
             for st in self._states:
-                self._step(st, t, lanes[row], client_props, events)
+                self._step(st, t, lanes[row], se_lanes[row], client_props, events)
         self._cycle += lanes.shape[0]
         return events
 
     def _step(self, st: _KeywordState, t: int, lanes_row: np.ndarray,
-              client_props: dict[str, int], events: list[Detection]) -> None:
+              se_lanes_row: np.ndarray, client_props: dict[str, int],
+              events: list[Detection]) -> None:
         spec = st.spec
         if t < START_CYCLE:
             return
@@ -106,15 +129,20 @@ class Orchestra:
                         spec.window)
         end_frame = 6 * (t + 1)
         if end_frame > st.lock_until and s >= self._active_threshold(spec, client_props):
-            events.append(Detection(spec.name, 2, s, t, None, end_frame))
+            events.append(Detection(
+                spec.name, 2, s, t,
+                keyword_begin_frame(se_lanes_row, t, spec.trim_tail),
+                end_frame))
             st.lock_until = end_frame + spec.lock
             st.run = None
             return
         notify = spec.notify
         if notify is not None and s >= notify and end_frame > st.lock_until:
-            st.run = (s, t) if st.run is None or s > st.run[0] else st.run
+            if st.run is None or s > st.run[0]:
+                begin = keyword_begin_frame(se_lanes_row, t, spec.trim_tail)
+                st.run = (s, t, begin)
         elif st.run is not None and 6 * (st.run[1] + 1) + spec.kw_window <= end_frame:
             events.append(Detection(
-                spec.name, 0, st.run[0], st.run[1], None,
+                spec.name, 0, st.run[0], st.run[1], st.run[2],
                 6 * (st.run[1] + 1) + spec.kw_window))
             st.run = None

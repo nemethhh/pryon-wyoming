@@ -60,6 +60,7 @@ class Posteriors:
     ww: np.ndarray     # (n, K+1) float32
     se: np.ndarray     # (n, 2) float32
     lanes: np.ndarray  # (n, 25, K+1) float32
+    se_lanes: np.ndarray = None  # (n, 25, 2) float32 — full se ring
 
 
 class GraphRunner:
@@ -132,16 +133,19 @@ class GraphRunner:
             k = self._num_classes
             return Posteriors(np.zeros((0, k), np.float32),
                               np.zeros((0, 2), np.float32),
-                              np.zeros((0, 25, k), np.float32))
+                              np.zeros((0, 25, k), np.float32),
+                              np.zeros((0, 25, 2), np.float32))
 
         lanes, ses = [], []
         for c in range(n_cycles):
             self._run_cycle(buf[c * CYCLE_FRAMES:(c + 1) * CYCLE_FRAMES], lanes, ses)
         lanes_v = np.stack(lanes)
+        se_v = np.stack(ses)
         return Posteriors(
             ww=lanes_v.max(axis=1),
-            se=np.stack(ses).max(axis=1),
+            se=se_v.max(axis=1),
             lanes=lanes_v,
+            se_lanes=se_v,
         )
 
     # -- internals -----------------------------------------------------------

@@ -52,7 +52,7 @@ def lanes_from(class_scores: dict[int, np.ndarray], t: int = 40) -> np.ndarray:
 def posteriors(lanes: np.ndarray):
     from pypryon.runner import Posteriors
     return Posteriors(ww=lanes.max(1), se=np.zeros((lanes.shape[0], 2), np.float32),
-                      lanes=lanes)
+                      lanes=lanes, se_lanes=np.zeros(lanes.shape[:2] + (2,), np.float32))
 
 
 def test_accept_crossing_threshold() -> None:
