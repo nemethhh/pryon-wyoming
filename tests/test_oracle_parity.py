@@ -28,7 +28,7 @@ import pytest
 from pypryon import Spotter
 from pypryon.modelset import load_model_set
 
-from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
+from conftest import ESPEAK_WAV, MODEL_DIR, ORACLE_ROOTFS, REPO_ROOT, load_wav16, requires_model
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLIPS_DIR = Path(__file__).parent / "clips"
@@ -87,9 +87,9 @@ def synthetic_clips():
 @pytest.fixture(scope="session")
 def live_oracle(synthetic_clips) -> dict[str, list[dict]] | None:
     """Live oracle runs per clip; None when firmware is absent."""
-    if MODEL_DIR is None:
+    if MODEL_DIR is None or ORACLE_ROOTFS is None:
         return None
-    from pypryon.oracle import run_oracle
+    from pryon_oracle import run_oracle
     runs = {}
     clips = {"alexa_espeak.raw": _espeak_raw(), **synthetic_clips}
     for name, path in clips.items():
@@ -101,7 +101,7 @@ def live_oracle(synthetic_clips) -> dict[str, list[dict]] | None:
 
 def test_live_oracle_reproduces_fixtures(live_oracle, synthetic_clips) -> None:
     if live_oracle is None:
-        pytest.skip("set PYPRYON_MODEL_DIR for the live oracle")
+        pytest.skip("set PYPRYON_MODEL_DIR and PYPRYON_ORACLE_ROOTFS for the live oracle")
     clips = {"alexa_espeak.raw": _espeak_raw(), **synthetic_clips}
     for name in clips:
         fixture = FIXTURES / f"{Path(name).stem}_oracle.json"
@@ -111,7 +111,7 @@ def test_live_oracle_reproduces_fixtures(live_oracle, synthetic_clips) -> None:
 
 def test_spotter_matches_live_oracle(live_oracle, synthetic_clips) -> None:
     if live_oracle is None:
-        pytest.skip("set PYPRYON_MODEL_DIR for the live oracle")
+        pytest.skip("set PYPRYON_MODEL_DIR and PYPRYON_ORACLE_ROOTFS for the live oracle")
     thresholds = _keyword_thresholds()
     clips = {"alexa_espeak.raw": _espeak_raw(), **synthetic_clips}
     errors: list[str] = []

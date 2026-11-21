@@ -1,16 +1,11 @@
-"""Run the pinned pryon_test oracle under qemu-user and parse its detections.
+"""Run the pinned pryon_test oracle (real libpryon under qemu-arm) and parse its detections.
 
-Mechanism (validated in Task 2, see .superpowers/sdd/pypryon-plan/task-2-report.md):
-the ARM harness ``build/oracle/pryon_test`` (built by ``tools/oracle/build.sh``, byte
-pinned) is executed with ``unshare --user --map-root-user --pid --fork`` +
-``qemu-arm -L <donut rootfs>`` exactly as echo-dot-assist's ``tools/qrun.sh`` does —
-the PID namespace is required because bionic mutexes store a 16-bit owner tid and
-deadlock when the host tid exceeds 65535. Audio is fed through stdin in one go with
-``-x 1000`` so the harness's real-time pacing sleep is collapsed (pryon drops audio
-when its backlog exceeds ~7 s, so the feed must not be slower than the decoder; the
-Task 2 smoke run with ``-x 1000`` reproduced the vendor-recorded detections).
+The ARM harness ``build/oracle/pryon_test`` (built by ``tools/oracle/build.sh``) runs under
+``unshare --user --map-root-user --pid --fork`` + ``qemu-arm -L <rootfs>``; the PID namespace
+is needed because bionic mutexes store a 16-bit owner tid. The rootfs (an unpacked Echo
+system image carrying libpryon.so) comes from ``PYPRYON_ORACLE_ROOTFS``.
 
-CLI: ``python -m pypryon.oracle <raw>`` prints the parsed detections as JSON.
+CLI: ``python tools/oracle/pryon_oracle.py <clip.raw>`` prints the detections as JSON.
 """
 from __future__ import annotations
 
@@ -25,52 +20,28 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ORACLE_BIN = REPO_ROOT / "build" / "oracle" / "pryon_test"
 
-# Rootfs-internal default manifest from tools/oracle/pryon_test.c (DEFAULT_MANIFEST);
-# the harness resolves it inside the rootfs because qemu-user's -L prefix maps guest
-# absolute paths into the rootfs (observed in the Task 2 smoke run). An explicit
-# model_dir is passed as a host path, which qemu uses as-is when the rootfs has no
-# such prefixed path.
 ROOTFS_DEFAULT_MANIFEST = "/system/local/models/keyword/en-US/ALEXA/pryon.manifest"
-
-# pryon_test consumes raw s16le mono 16 kHz audio (its "format:" line prints
-# enc=0 rate=16000 bits=16 ch=1; the pacing sleep divides by 16000).
 SAMPLE_RATE_HZ = 16000
-
-# Feed speed: pryon_test sleeps n/16000/speed seconds per chunk, so -x 1000 makes
-# the pacing negligible (Task 2's unpaced smoke-run value; brief mandates no throttling).
+# pryon_test sleeps n/16000/speed per chunk; libpryon drops audio past a ~7 s backlog
 FEED_SPEED = "1000"
-
-# pryon_test.c keeps at most 8 client properties (props[8]) and -p takes name=value
-# with an integer atoll() conversion.
-MAX_CLIENT_PROPS = 8
-
-# Exit codes of pryon_test.c: 0 = detections were printed, 3 = no result callbacks.
+MAX_CLIENT_PROPS = 8  # pryon_test.c props[8]
 ORACLE_EXIT_OK = 0
 ORACLE_EXIT_NO_DETECTIONS = 3
 
-# stdout RESULT line, printed by our own harness tools/oracle/pryon_test.c (on_result):
-# "RESULT decoder=%s keyword=%s type=%d begin=%llu end=%llu (%.2fs..%.2fs) meta=%u"
+# tools/oracle/pryon_test.c on_result()
 _RESULT_RE = re.compile(
     r"^RESULT decoder=\S+ keyword=(?P<keyword>\S+) type=(?P<type>\d+) "
     r"begin=(?P<begin>\d+) end=(?P<end>\d+) \(\d+\.\d+s\.\.\d+\.\d+s\) meta=\d+$"
 )
 
-# Engine-side KWS recognition log line (stderr), observed in the Task 2 pinned-binary
-# smoke run (build/oracle/smoke.stderr lines 503/524) and in echo-dot-assist's
-# FINDINGS.md records; field names/separators are the vendor logger's format:
-# pryon[<level>] <TAG>: DecoderID=<id>: recognition_id=<id>-<n>: {KWS}
-#   segmentation_score=<f>,classifier_score=<f>,active_threshold=<f>,detection_type=<word>
+# libpryon's own KWS log line on stderr
 _KWS_RE = re.compile(
     r"^pryon\[\d+\] \w+: DecoderID=\S+: recognition_id=(?P<rid>[^:]+): \{KWS\} "
     r"segmentation_score=[^,]+,classifier_score=(?P<score>[^,]+),"
     r"active_threshold=(?P<threshold>[^,]+),detection_type=(?P<dtype>\S+)$"
 )
 
-# RESULT `type` int ↔ KWS detection_type word. Provenance: vendor
-# pryon-native/LEDGER.md §"Decoder: score and accept/near-miss rule (2026-11-11)":
-# "Accept (RESULT type=2)" and "Near-miss (type=0)"; thresholds accept 0.923 /
-# notify 0.69 come from the model's kw.cfg.json. Unknown type codes are kept as the
-# KWS word without error (the map is only a consistency check).
+# vendor LEDGER §Decoder: RESULT type 2 = Accept, 0 = Near-miss
 _DETECTION_TYPE_BY_CODE = {2: "Accept", 0: "NearMiss"}
 
 
@@ -78,12 +49,11 @@ class OracleError(RuntimeError):
     """The oracle could not be run, or its output could not be parsed."""
 
 
-def _eda_dir() -> Path:
-    """The echo-dot-assist checkout: $EDA_DIR, else ../echo-dot-assist next to this repo."""
-    env = os.environ.get("EDA_DIR")
-    if env:
-        return Path(env).expanduser().resolve()
-    return (REPO_ROOT.parent / "echo-dot-assist").resolve()
+def _rootfs() -> Path:
+    env = os.environ.get("PYPRYON_ORACLE_ROOTFS")
+    if not env:
+        raise OracleError("set PYPRYON_ORACLE_ROOTFS to an unpacked Echo rootfs carrying libpryon.so")
+    return Path(env).expanduser().resolve()
 
 
 def parse_detections(output: str) -> list[dict]:
@@ -91,7 +61,7 @@ def parse_detections(output: str) -> list[dict]:
 
     RESULT lines (stdout) and KWS recognition log lines (stderr) pair up by ordinal:
     the n-th RESULT matches the KWS line whose recognition_id ends in ``-n``
-    (dec-0/dec-1 in the Task 2 smoke run). Returns dicts with keys ``keyword,
+    Returns dicts with keys ``keyword,
     detection_type, classifier_score, begin_sample, end_sample, active_threshold``.
     """
     results: list[re.Match[str]] = []
@@ -148,12 +118,11 @@ def run_oracle(
     """Feed a raw s16le 16 kHz mono clip through the pinned oracle, parse detections.
 
     raw_path: audio clip on the host (fed via stdin, so no guest path translation).
-    model_dir: model directory holding pryon.manifest; None uses the harness default
-    (the ALEXA model inside the donut rootfs).
+    model_dir: model directory holding pryon.manifest; None uses the ALEXA model
+    inside the rootfs.
     client_props: client properties pushed before the audio as ``-p name=value``.
     timeout_s: subprocess timeout; None scales with clip length (10x audio duration,
-    floor 120 s — the feed is unpaced, so run time is qemu decode time) so a long
-    clip is never clipped by qrun.sh's 120 s default.
+    floor 120 s — the feed is unpaced, so run time is qemu decode time).
     """
     props = client_props or {}
     for name, value in props.items():
@@ -171,21 +140,16 @@ def run_oracle(
     if not ORACLE_BIN.is_file():
         raise OracleError(f"oracle binary missing: {ORACLE_BIN} — build it with tools/oracle/build.sh")
     if shutil.which("qemu-arm") is None:
-        raise OracleError("qemu-arm not found on PATH (echo-dot-assist keeps it in ~/.local/bin)")
+        raise OracleError("qemu-arm not found on PATH")
     if shutil.which("unshare") is None:
         raise OracleError("unshare not found on PATH (needed for the PID-namespace qemu wrapper)")
-    rootfs = _eda_dir() / "firmware" / "donut" / "rootfs"
+    rootfs = _rootfs()
     if not rootfs.is_dir():
-        raise OracleError(
-            f"donut firmware rootfs not found: {rootfs} "
-            f"(EDA_DIR={os.environ.get('EDA_DIR') or 'unset'}; "
-            "set EDA_DIR to the echo-dot-assist checkout)"
-        )
+        raise OracleError(f"oracle rootfs not found: {rootfs} (PYPRYON_ORACLE_ROOTFS)")
 
     args = [
         "unshare", "--user", "--map-root-user", "--pid", "--fork", "--kill-child",
-        # --kill-child (beyond qrun.sh) so a hard timeout cannot orphan qemu inside
-        # its private PID namespace.
+        # a hard timeout must not orphan qemu inside its private PID namespace
         "qemu-arm", "-L", str(rootfs),
         "-E", "LD_LIBRARY_PATH=/system/lib:/system/vendor/lib",
         str(ORACLE_BIN), "-x", FEED_SPEED,
@@ -217,7 +181,7 @@ def run_oracle(
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1 or argv[0] in ("-h", "--help"):
-        print("usage: python -m pypryon.oracle <raw>\n  <raw>: s16le mono 16 kHz clip", file=sys.stderr)
+        print("usage: tools/oracle/pryon_oracle.py <raw>\n  <raw>: s16le mono 16 kHz clip", file=sys.stderr)
         return 2
     detections = run_oracle(Path(argv[0]))
     print(json.dumps(detections, indent=2))

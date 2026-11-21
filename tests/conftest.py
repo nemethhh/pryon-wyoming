@@ -7,6 +7,7 @@ additionally needs ``PYPRYON_ORACLE_ROOTFS``.
 from __future__ import annotations
 
 import os
+import sys
 import wave
 from pathlib import Path
 
@@ -15,6 +16,9 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ESPEAK_WAV = REPO_ROOT / "tests/data/alexa_espeak.wav"
+
+# dev-only oracle tooling, not part of the package
+sys.path.insert(0, str(REPO_ROOT / "tools/oracle"))
 
 
 def _env_dir(name: str) -> Path | None:
@@ -29,6 +33,14 @@ MODEL_DIR = _env_dir("PYPRYON_MODEL_DIR")
 
 requires_model = pytest.mark.skipif(
     MODEL_DIR is None, reason="set PYPRYON_MODEL_DIR to an extracted ALEXA model dir"
+)
+
+
+ORACLE_ROOTFS = _env_dir("PYPRYON_ORACLE_ROOTFS")
+
+requires_oracle = pytest.mark.skipif(
+    MODEL_DIR is None or ORACLE_ROOTFS is None,
+    reason="set PYPRYON_MODEL_DIR and PYPRYON_ORACLE_ROOTFS for the live oracle",
 )
 
 

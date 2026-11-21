@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from pypryon.oracle import OracleError, parse_detections, run_oracle
+from pryon_oracle import OracleError, parse_detections, run_oracle
 
 
 REAL_ORACLE_OUTPUT = r"""attributes: {"object_type_name":"pryon_library_attributes","object_type_version":1,"pryon_library_engine_compatibility_info":{"aed_ecids":[1,2,3,5,6,7],"enrollment_profile_current_ecid":2,"enrollment_profile_earliest_supported_ecid":1,"fingerprint_ecids":[1,2,3,4],"interaction_context_sdsm_current_ecid":1,"interaction_context_sdsm_earliest_supported_ecid":1,"mutable_model_current_ecid":5,"mutable_model_earliest_supported_ecid":5,"ntt_dvad_ecids":[1,2,3,4,5,6,7,8,9,10],"pryon_engine_uuid":"da5620af-cace-58d0-ae0d-39724cc0b2a8","speaker_id_model_current_ecid":3,"speaker_id_model_earliest_supported_ecid":3,"supplemental_model_current_ecid":5,"supplemental_model_earliest_supported_ecid":4,"version":1,"wakeword_ecids":[1,2,4,5,6,7,8,9,10,11,12,13,14,15,16,17,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37]},"pryon_library_version_info":{"atlas":"","build_type":"Release","compiler":"Clang 12.0.9","git_version":"UNKNOWN-2.41-gUNKNOWN","host_platform":"x86_64-Linux-4.14.355-280.710.amzn2.x86_64","target_platform":"armv7-a-Android-1","uuid":"da5620af-cace-58d0-ae0d-39724cc0b2a8","version":2}}
@@ -93,7 +93,7 @@ def test_run_oracle_missing_clip_raises(tmp_path: Path) -> None:
 
 
 def test_run_oracle_missing_binary_raises(tmp_path, monkeypatch) -> None:
-    import pypryon.oracle as oracle
+    import pryon_oracle as oracle
 
     clip = tmp_path / "clip.raw"
     clip.write_bytes(b"\x00\x00")
@@ -105,14 +105,14 @@ def test_run_oracle_missing_binary_raises(tmp_path, monkeypatch) -> None:
 def test_run_oracle_missing_rootfs_raises(tmp_path, monkeypatch) -> None:
     import shutil
 
-    import pypryon.oracle as oracle
+    import pryon_oracle as oracle
 
     clip = tmp_path / "clip.raw"
     clip.write_bytes(b"\x00\x00")
     monkeypatch.setattr(oracle, "ORACLE_BIN", clip)  # exists -> check passes
     monkeypatch.setattr(shutil, "which", lambda name: f"/usr/bin/{name}")
-    monkeypatch.setenv("EDA_DIR", str(tmp_path))
-    with pytest.raises(OracleError, match="EDA_DIR"):
+    monkeypatch.setenv("PYPRYON_ORACLE_ROOTFS", str(tmp_path / "missing"))
+    with pytest.raises(OracleError, match="PYPRYON_ORACLE_ROOTFS"):
         oracle.run_oracle(clip)
 
 
