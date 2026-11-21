@@ -37,6 +37,16 @@ requires_model = pytest.mark.skipif(
 
 
 ORACLE_ROOTFS = _env_dir("PYPRYON_ORACLE_ROOTFS")
+DAVS_MODEL_DIR = _env_dir("PYPRYON_DAVS_MODEL_DIR")
+# parity clips: the author's recordings, else locally generated TTS clips (tools/make_tts_clips.py)
+CLIPS_DIR = _env_dir("PYPRYON_CLIPS_DIR") or (
+    REPO_ROOT / ".cache/tts-clips" if (REPO_ROOT / ".cache/tts-clips").is_dir() else None)
+
+requires_davs = pytest.mark.skipif(
+    DAVS_MODEL_DIR is None, reason="set PYPRYON_DAVS_MODEL_DIR to an extracted DAVS alexa-en-US set")
+requires_davs_oracle = pytest.mark.skipif(
+    DAVS_MODEL_DIR is None or ORACLE_ROOTFS is None,
+    reason="set PYPRYON_DAVS_MODEL_DIR and PYPRYON_ORACLE_ROOTFS for the live DAVS oracle")
 
 requires_oracle = pytest.mark.skipif(
     MODEL_DIR is None or ORACLE_ROOTFS is None,

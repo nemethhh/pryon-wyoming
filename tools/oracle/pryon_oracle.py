@@ -41,8 +41,8 @@ _KWS_RE = re.compile(
     r"active_threshold=(?P<threshold>[^,]+),detection_type=(?P<dtype>\S+)$"
 )
 
-# vendor LEDGER §Decoder: RESULT type 2 = Accept, 0 = Near-miss
-_DETECTION_TYPE_BY_CODE = {2: "Accept", 0: "NearMiss"}
+# vendor LEDGER §Decoder: RESULT type 2 = Accept, 0 = Near-miss; DAVS verifier accepts also report 2
+_DETECTION_TYPES_BY_CODE = {2: ("Accept", "AcceptAuxiliary"), 0: ("NearMiss",)}
 
 
 class OracleError(RuntimeError):
@@ -59,40 +59,26 @@ def _rootfs() -> Path:
 def parse_detections(output: str) -> list[dict]:
     """Parse concatenated pryon_test stdout+stderr text into detection dicts.
 
-    RESULT lines (stdout) and KWS recognition log lines (stderr) pair up by ordinal:
-    the n-th RESULT matches the KWS line whose recognition_id ends in ``-n``
-    Returns dicts with keys ``keyword,
-    detection_type, classifier_score, begin_sample, end_sample, active_threshold``.
+    The n-th RESULT line (stdout) pairs with the n-th KWS detection line (stderr);
+    recognition ids are not used because DAVS sets number them from 1. Returns dicts
+    with keys ``keyword, detection_type, classifier_score, begin_sample, end_sample,
+    active_threshold``.
     """
-    results: list[re.Match[str]] = []
-    kws: dict[int, re.Match[str]] = {}
-    for line in output.splitlines():
-        m = _RESULT_RE.match(line)
-        if m:
-            results.append(m)
-            continue
-        m = _KWS_RE.match(line)
-        if m:
-            decoder, sep, idx = m.group("rid").rpartition("-")
-            if not decoder or not sep or not idx.isdigit():
-                raise OracleError(f"unparsable recognition_id in KWS log line: {line!r}")
-            i = int(idx)
-            if i in kws:
-                raise OracleError(f"duplicate KWS detection line for recognition index {i}: {line!r}")
-            kws[i] = m
+    lines = output.splitlines()
+    results = [m for m in map(_RESULT_RE.match, lines) if m]
+    kws = [m for m in map(_KWS_RE.match, lines) if m]
     if len(results) != len(kws):
         raise OracleError(
             f"RESULT lines ({len(results)}) do not match KWS detection lines ({len(kws)}): "
             "the oracle output streams are out of sync"
         )
     detections = []
-    for i, r in enumerate(results):
-        k = kws[i]
+    for i, (r, k) in enumerate(zip(results, kws, strict=True)):
         dtype = k.group("dtype")
-        expected = _DETECTION_TYPE_BY_CODE.get(int(r.group("type")))
-        if expected is not None and expected != dtype:
+        allowed = _DETECTION_TYPES_BY_CODE.get(int(r.group("type")))
+        if allowed is not None and dtype not in allowed:
             raise OracleError(
-                f"RESULT type={r.group('type')} (i.e. {expected}) contradicts KWS "
+                f"RESULT type={r.group('type')} (i.e. {'/'.join(allowed)}) contradicts KWS "
                 f"detection_type={dtype} for detection #{i}"
             )
         detections.append(
@@ -176,6 +162,31 @@ def run_oracle(
         tail = "\n".join(output.splitlines()[-20:])
         raise OracleError(f"oracle exited {proc.returncode}; last output:\n{tail}")
     return parse_detections(output)
+
+
+def run_oracle_cached(wav: Path, model_dir: Path, cache_dir: Path,
+                      client_props: dict[str, int] | None = None) -> list[dict]:
+    """run_oracle on a 16 kHz mono WAV, cached as JSON keyed by audio, model and props."""
+    import hashlib
+    import tempfile
+    import wave
+
+    with wave.open(str(wav)) as w:
+        if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (SAMPLE_RATE_HZ, 1, 2):
+            raise OracleError(f"{wav.name}: oracle clips must be 16 kHz mono 16-bit")
+        pcm = w.readframes(w.getnframes())
+    key = hashlib.sha256(pcm + str(Path(model_dir).resolve()).encode()
+                         + json.dumps(client_props or {}, sort_keys=True).encode()).hexdigest()[:16]
+    cache = Path(cache_dir) / f"{Path(wav).stem}.{key}.oracle.json"
+    if cache.is_file():
+        return json.loads(cache.read_text())
+    with tempfile.TemporaryDirectory() as tmp:
+        raw = Path(tmp) / "clip.raw"
+        raw.write_bytes(pcm)
+        detections = run_oracle(raw, model_dir, client_props)
+    cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps(detections, indent=1))
+    return detections
 
 
 def main(argv: list[str] | None = None) -> int:
