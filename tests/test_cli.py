@@ -35,6 +35,11 @@ def _wav(path: Path, rate=16000, channels=1, width=2, frames=1600) -> Path:
     return path
 
 
+def _last_line(stderr: str) -> str:
+    # onnxruntime may log host hardware probing first on some machines
+    return stderr.strip().splitlines()[-1] if stderr.strip() else ""
+
+
 def test_version_flag() -> None:
     proc = _cli("--version")
     assert proc.returncode == 0
@@ -72,15 +77,15 @@ def test_cli_bad_audio_exit_2(synth_dir, tmp_path, make, needle) -> None:
     proc = _cli("run", str(synth_dir), str(make(tmp_path)))
     assert proc.returncode == 2, proc.stderr
     assert "Traceback" not in proc.stderr
-    assert proc.stderr.startswith("pypryon: error:"), proc.stderr
-    assert needle in proc.stderr
+    assert _last_line(proc.stderr).startswith("pypryon: error:"), proc.stderr
+    assert needle in _last_line(proc.stderr)
 
 
 def test_cli_not_a_model_dir_exit_2(tmp_path) -> None:
     proc = _cli("run", str(tmp_path), str(_wav(tmp_path / "ok.wav")))
     assert proc.returncode == 2
     assert "Traceback" not in proc.stderr
-    assert proc.stderr.startswith("pypryon: error:")
+    assert _last_line(proc.stderr).startswith("pypryon: error:"), proc.stderr
 
 
 def test_load_pcm16_raw_roundtrip(tmp_path) -> None:

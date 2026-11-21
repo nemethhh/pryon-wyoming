@@ -74,4 +74,7 @@ def test_streaming_logs_no_ort_warnings(synth_dir) -> None:
     proc = subprocess.run([sys.executable, "-c", code, str(synth_dir)],
                           capture_output=True, text=True, env=env)
     assert proc.returncode == 0, proc.stderr
-    assert "onnxruntime" not in proc.stderr, proc.stderr[:2000]
+    # host hardware probing (device_discovery) is the runtime's own, not the graph's
+    graph_warnings = [line for line in proc.stderr.splitlines()
+                      if "onnxruntime" in line and "device_discovery" not in line]
+    assert graph_warnings == [], "\n".join(graph_warnings)[:2000]
