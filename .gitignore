@@ -13,3 +13,11 @@ dist/
 
 # agent working state (plans/reports)
 .superpowers/
+
+# model-artifact hazards: no Amazon-derived bytes in git (local models, captures,
+# unpacked firmware stay on disk only)
+local-data/
+*.onnx
+*.raw
+firmware/
+models/
