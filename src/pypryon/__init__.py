@@ -7,12 +7,13 @@ from .decoder import Detection, Orchestra
 from .fe import lfbe_frames
 from .modelset import ModelError, ModelSet, load_model_set
 from .runner import GraphRunner, Posteriors
-from .spotter import ACCEPT, NEAR_MISS, PryonDetection, Spotter
+from .spotter import ACCEPT, ACCEPT_AUXILIARY, NEAR_MISS, PryonDetection, Spotter
 
 __version__ = "0.1.0"
 
 __all__ = [
     "ACCEPT",
+    "ACCEPT_AUXILIARY",
     "NEAR_MISS",
     "Detection",
     "GraphRunner",
