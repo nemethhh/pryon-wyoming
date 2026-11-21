@@ -1,0 +1,18 @@
+[
+  {
+    "keyword": "ALEXA",
+    "detection_type": "Accept",
+    "classifier_score": 0.936928,
+    "begin_sample": 22240,
+    "end_sample": 32640,
+    "active_threshold": 0.923
+  },
+  {
+    "keyword": "ALEXA",
+    "detection_type": "NearMiss",
+    "classifier_score": 0.913608,
+    "begin_sample": 61760,
+    "end_sample": 89920,
+    "active_threshold": 0.69
+  }
+]
