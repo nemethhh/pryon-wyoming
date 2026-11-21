@@ -5,7 +5,6 @@ import json
 import subprocess
 import sys
 import wave
-from pathlib import Path
 
 from conftest import DAVS_MODEL_DIR, ESPEAK_WAV, REPO_ROOT, requires_davs_oracle
 
