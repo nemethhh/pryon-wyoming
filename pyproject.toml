@@ -22,6 +22,7 @@ zeroconf = ["zeroconf>=0.132"]
 
 [project.scripts]
 pypryon = "pypryon.cli:main"
+pypryon-wyoming = "pypryon.wyoming.__main__:main"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
