@@ -335,6 +335,13 @@ def test_nemort_missing_lstm_pair_key_names_nemort_config(tmp_path: Path) -> Non
         load_model_set(root)
 
 
+def test_missing_words_file_names_words_file(tmp_path: Path) -> None:
+    root = _write_min_model(tmp_path / "model")
+    (root / "words.txt").unlink()
+    with pytest.raises(ModelError, match=r"words\.txt.*pryon\.config"):
+        load_model_set(root)
+
+
 def test_malformed_words_file_names_words_file(tmp_path: Path) -> None:
     root = _write_min_model(tmp_path / "model")
     (root / "words.txt").write_text("<eps> 0\nTESTKW notanumber\n")

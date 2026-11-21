@@ -229,7 +229,9 @@ def _load_fe(cfg: dict[str, Any], path: Path) -> FeConfig:
     )
 
 
-def _load_words(path: Path) -> dict[int, str]:
+def _load_words(path: Path, referrer: Path) -> dict[int, str]:
+    if not path.is_file():
+        raise ModelError(f"{path.name}: file not found (referenced from {referrer.name})")
     words: dict[int, str] = {}
     for lineno, raw in enumerate(path.read_text().splitlines(), 1):
         line = raw.strip()
@@ -396,7 +398,9 @@ def load_model_set(model_dir: Path) -> ModelSet:
     kw = _load_json(kw_path, config_path)
     keywords, client_prop_defaults = _load_keywords(kw, kw_path)
 
-    words = _load_words(model_dir / str(_require(cfg, "id2word.mapping_filepath", config_path)))
+    words = _load_words(
+        model_dir / str(_require(cfg, "id2word.mapping_filepath", config_path)), config_path
+    )
 
     return ModelSet(
         graph_path=graph_path,
