@@ -265,20 +265,27 @@ def build_model_dir(dest: Path, *, seed: int = 0, keywords: tuple[str, ...] = ("
 
 # -- single-op graphs for rewrite parity ------------------------------------------------
 
-def _single(g: _Graph, inputs, outputs) -> bytes:
-    return g.model(inputs, outputs, duplicate_inits=False)
+def _single(g: _Graph, inputs, outputs, opset: int = 11) -> bytes:
+    return g.model(inputs, outputs, duplicate_inits=False, opset=opset, ir=6 if opset <= 11 else 8)
 
 
-def hybrid_gemm_graph(w, sw, zw, k: int) -> bytes:
+def hybrid_gemm_graph(w, sw, zw, k: int, *, bias=None, trans_b: int | None = None,
+                      opset: int = 11) -> bytes:
+    """``w`` is [N, K] (stored transposed to [K, N] when ``trans_b == 0``)."""
     g = _Graph(np.random.default_rng(0))
     sums = w.astype(np.int32).sum(axis=1)
-    g.op("HybridGemm", ["x", g.init(w, "w"), g.init(sw, "sw"), g.init(zw, "zw"),
-                            g.init(sums, "sums")])[0]
+    stored = w.T.copy() if trans_b == 0 else w
+    ins = ["x", g.init(stored, "w"), g.init(sw, "sw"), g.init(zw, "zw"), g.init(sums, "sums")]
+    if bias is not None:
+        ins.append(g.init(bias, "bias"))
+    attrs = {} if trans_b is None else {"transB": trans_b}
+    g.op("HybridGemm", ins, **attrs)
     g.nodes[-1].output[0] = "y"
-    return _single(g, [_vi("x", T.FLOAT, ["M", k])], [_vi("y", T.FLOAT, ["M", w.shape[0]])])
+    return _single(g, [_vi("x", T.FLOAT, ["M", k])], [_vi("y", T.FLOAT, ["M", w.shape[0]])], opset)
 
 
-def hybrid_conv_graph(w, sw, zw, bias, kernel, strides, in_shape, dilations=(1, 1)) -> bytes:
+def hybrid_conv_graph(w, sw, zw, bias, kernel, strides, in_shape, dilations=(1, 1),
+                      opset: int = 11) -> bytes:
     g = _Graph(np.random.default_rng(0))
     sums = w.reshape(w.shape[0], -1).astype(np.int32).sum(axis=1)
     g.op("HybridConv", ["x", g.init(w, "w"), g.init(sw, "sw"), g.init(zw, "zw"),
@@ -286,10 +293,11 @@ def hybrid_conv_graph(w, sw, zw, bias, kernel, strides, in_shape, dilations=(1, 
          data_format=b"NCHW", dilations=list(dilations), strides=list(strides),
          kernel_shape=list(kernel), group=1)
     g.nodes[-1].output[0] = "y"
-    return _single(g, [_vi("x", T.FLOAT, list(in_shape))], [_vi("y", T.FLOAT, None)])
+    return _single(g, [_vi("x", T.FLOAT, list(in_shape))], [_vi("y", T.FLOAT, None)], opset)
 
 
-def hybrid_lstm_graph(w, sw_w, zw_w, r, sw_r, zw_r, b, n_in: int, hidden: int) -> bytes:
+def hybrid_lstm_graph(w, sw_w, zw_w, r, sw_r, zw_r, b, n_in: int, hidden: int, *,
+                      lanes: int = LANES, x_lanes: int | None = None, opset: int = 11) -> bytes:
     g = _Graph(np.random.default_rng(0))
     sums_w = w.astype(np.int32).sum(axis=-1)
     sums_r = r.astype(np.int32).sum(axis=-1)
@@ -298,12 +306,12 @@ def hybrid_lstm_graph(w, sw_w, zw_w, r, sw_r, zw_r, b, n_in: int, hidden: int) -
            g.init(b, "B"), "", "h0", "c0"]
     g.op("HybridLSTM", ins, n_out=3, direction=b"forward", hidden_size=hidden)
     g.nodes[-1].output[:] = ["y", "yh", "yc"]
-    return _single(g, [_vi("x", T.FLOAT, ["T", LANES, n_in]),
-                       _vi("h0", T.FLOAT, [1, LANES, hidden]),
-                       _vi("c0", T.FLOAT, [1, LANES, hidden])],
-                   [_vi("y", T.FLOAT, ["T", 1, LANES, hidden]),
-                    _vi("yh", T.FLOAT, [1, LANES, hidden]),
-                    _vi("yc", T.FLOAT, [1, LANES, hidden])])
+    return _single(g, [_vi("x", T.FLOAT, ["T", x_lanes or lanes, n_in]),
+                       _vi("h0", T.FLOAT, [1, lanes, hidden]),
+                       _vi("c0", T.FLOAT, [1, lanes, hidden])],
+                   [_vi("y", T.FLOAT, ["T", 1, lanes, hidden]),
+                    _vi("yh", T.FLOAT, [1, lanes, hidden]),
+                    _vi("yc", T.FLOAT, [1, lanes, hidden])], opset)
 
 
 def batchnorm_graph(gamma, beta, mean, var, eps: float, shape) -> bytes:
