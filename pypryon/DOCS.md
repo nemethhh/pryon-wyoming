@@ -16,12 +16,14 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
    In Echo firmware they live in `/system/local/models/keyword/<locale>/<NAME>/` (see the
    [README](https://github.com/nemethhh/pryon-wyoming#getting-a-model-directory)).
    Each directory under `/share/pypryon` is loaded; every keyword in it becomes a wake word
-   (the ALEXA directory offers `alexa` and `stop`).
+   (the ALEXA directory offers `alexa` and `stop`). A keyword found in two directories is served from the
+   first one only.
 2. **Install and start the add-on.** Home Assistant finds it: accept the **Wyoming Protocol** integration it
    offers (Settings → Devices & services).
 3. **Pick the wake word**: Settings → Voice assistants → your assistant → **Wake word**, engine `pypryon`,
    wake word `alexa`. For a voice satellite, choose the wake word in the satellite's device settings
-   (only for satellites that stream audio to Home Assistant for wake word detection).
+   (only for satellites that stream audio to Home Assistant for wake word detection). A client that names no
+   wake word gets each directory's first one (`alexa`, not `stop`).
 
 ## Options
 
@@ -29,7 +31,7 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
 |---|---|---|
 | `models_dir` | `/share/pypryon` | Directory holding one subdirectory per model. |
 | `thresholds` | none | Per-keyword accept threshold, `KEYWORD=VALUE` with 0 < VALUE ≤ 1, e.g. `ALEXA=0.88`. Lower wakes more easily (and falsely more often). Without it the model's own threshold is used (0.923 for ALEXA). |
-| `debug_logging` | false | Log every connection's events. |
+| `debug_logging` | false | Debug-level logging, including unexpected protocol events. |
 
 ## Troubleshooting
 
@@ -37,7 +39,7 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
   or misplaced; the log names the path it searched. The directory must hold `pryon.manifest` directly.
 - **`Skipping /share/pypryon/X: ...`**: that directory is not a model this version can load (for example a DAVS
   multi-model download); the others still load.
-- Detections are logged at the default level as `Detected alexa (score 0.94)`.
+- Detections are logged at the default level as `Detected alexa (score 0.937)`.
 
 ## Legal
 

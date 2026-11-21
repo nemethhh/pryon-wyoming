@@ -24,11 +24,20 @@ jobs:
         run: uv run --python ${{ matrix.python }} pytest -q
 
   image:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
       - name: Build the add-on image
-        run: make image
+        run: |
+          base=$(sed -n 's/^ *${{ matrix.arch }}: *//p' pypryon/build.yaml)
+          make image BASE="$base"
       - name: The image carries no model
         run: |
           found=$(docker run --rm --entrypoint sh pypryon-addon -c \

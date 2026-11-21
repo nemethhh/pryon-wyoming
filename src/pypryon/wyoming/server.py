@@ -40,8 +40,10 @@ class PryonWakeHandler(AsyncEventHandler):
         self._info = info
         self._models = models
         self._all_names = {kw.lower() for m in models for kw in m.keywords}
+        # with no names requested, only each model's wake word (e.g. not ALEXA's STOP)
+        self._default_names = {m.keywords[0].lower() for m in models}
         self._converter = AudioChunkConverter(rate=SAMPLE_RATE, width=2, channels=1)
-        self._names: set[str] = set(self._all_names)
+        self._names: set[str] = set(self._default_names)
         self._spotters: list[Spotter] | None = None
         self._detected = False
         self._samples = 0
@@ -68,7 +70,7 @@ class PryonWakeHandler(AsyncEventHandler):
 
     def _select(self, names: list[str] | None) -> None:
         if not names:
-            self._names = set(self._all_names)
+            self._names = set(self._default_names)
             return
         wanted = {n.lower() for n in names}
         unknown = wanted - self._all_names
@@ -91,10 +93,11 @@ class PryonWakeHandler(AsyncEventHandler):
         if timestamp is None:
             timestamp = self._samples * 1000 // SAMPLE_RATE
         self._samples += pcm.size
-        for spotter in self._spotters:
+        for model, spotter in zip(self._models, self._spotters, strict=True):
             for det in await asyncio.to_thread(spotter.feed, pcm):
                 name = det.keyword.lower()
-                if det.detection_type != ACCEPT or name not in self._names:
+                if det.detection_type != ACCEPT or det.keyword not in model.keywords \
+                        or name not in self._names:
                     continue
                 self._detected = True
                 _LOGGER.info("Detected %s (score %.3f)", name, det.score)

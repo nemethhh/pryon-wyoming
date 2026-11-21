@@ -166,11 +166,22 @@ def test_threshold_option_parsing(models_dir) -> None:
         load_all(models_dir, {"HAY": 0.5})
 
 
-def test_duplicate_keyword_across_models_rejected(tmp_path) -> None:
+def test_duplicate_keyword_served_once(tmp_path, caplog) -> None:
     build_model_dir(tmp_path / "A")
-    build_model_dir(tmp_path / "B")
-    with pytest.raises(ValueError, match="HEY"):
-        load_all(tmp_path, {})
+    build_model_dir(tmp_path / "B", keywords=("HO", "STOP"))
+    with caplog.at_level(logging.WARNING):
+        models = load_all(tmp_path, {})
+    assert [m.keywords for m in models] == [["HEY", "STOP"], ["HO"]]
+    assert "STOP" in caplog.text and "B" in caplog.text
+    assert [m.name for m in make_info(models).wake[0].models] == ["hey", "stop", "ho"]
+
+
+def test_default_names_are_each_models_wake_word(models_dir) -> None:
+    # STOP scores ~0.92 on silence in the synthetic model, above its 0.55 threshold
+    default = _run(lambda port: _stream(port, SILENCE, names=None), models_dir, thresholds={})
+    assert [e.type for e in default] == ["not-detected"]
+    asked = _run(lambda port: _stream(port, SILENCE, names=["stop"]), models_dir, thresholds={})
+    assert {Detection.from_event(e).name for e in asked if Detection.is_type(e.type)} == {"stop"}
 
 
 def test_cli_version() -> None:

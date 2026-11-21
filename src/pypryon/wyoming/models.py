@@ -20,10 +20,7 @@ class LoadedModel:
     model_set: ModelSet
     session: ort.InferenceSession       # shared by every connection's Spotter
     thresholds: dict[str, float]        # overrides for this model's keywords only
-
-    @property
-    def keywords(self) -> list[str]:
-        return [k.name for k in self.model_set.keywords]
+    keywords: list[str]                 # served keywords, kw.cfg order (first = wake word)
 
 
 def discover(models_dir: Path) -> list[Path]:
@@ -63,13 +60,18 @@ def load_all(models_dir: Path, thresholds: Mapping[str, float]) -> list[LoadedMo
         except Exception as exc:  # noqa: BLE001 - one bad dir must not take the others down
             _LOGGER.warning("Skipping %s: %s", path, exc)
             continue
+        served = []
         for kw in model_set.keywords:
             if kw.name in seen:
-                raise ValueError(f"keyword {kw.name!r} is in both {seen[kw.name]} and {path}")
+                _LOGGER.warning("%s: keyword %s is already served from %s; skipping it here",
+                                path, kw.name, seen[kw.name])
+                continue
             seen[kw.name] = path
-        names = {k.name for k in model_set.keywords}
+            served.append(kw.name)
+        if not served:
+            continue
         models.append(LoadedModel(path, model_set, session,
-                                  {k: v for k, v in thresholds.items() if k in names}))
+                                  {k: v for k, v in thresholds.items() if k in served}, served))
     if not models:
         raise RuntimeError(
             f"no Pryon model found under {models_dir} (expected <dir>/<NAME>/pryon.manifest)")
