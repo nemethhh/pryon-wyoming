@@ -77,7 +77,7 @@ def test_chunked_feed_matches_whole(events, pcm) -> None:
     fed = 0
     rng = np.random.default_rng(0)
     while fed < pcm.size:
-        n = int(rng.choice([1000, 960, 13_333, 160_000]))
+        n = int(rng.choice([1000, 960, 1280, 13_333, 160_000]))
         out += spotter.feed(pcm[fed:fed + n])
         fed += n
     assert [(e.keyword, e.detection_type, e.score, e.begin_sample, e.end_sample) for e in out] == \

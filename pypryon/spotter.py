@@ -97,8 +97,12 @@ class Spotter:
             self._pending_pcm = buf
             return []
         frames = lfbe_frames(buf, self._fe_cfg)
-        consumed = (n - 1) * 160 + 400
-        self._pending_pcm = buf[consumed:].copy()
+        # The next feed's frames must start on the 160-sample grid: frame n
+        # begins at n*160 (windows overlap the previous frame's tail by 240
+        # samples), so the pending tail is everything from n*160 on — NOT
+        # from the last frame's end, which is off-grid and would phase-shift
+        # the whole frame stream.
+        self._pending_pcm = buf[n * 160:].copy()
 
         posteriors = self._runner.push_frames(frames)
         self._record_scores(posteriors)

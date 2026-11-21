@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pypryon"
-version = "0.0.1"
+version = "0.1.0"
 description = "Run Amazon Pryon wake-word models on stock onnxruntime"
 license = "MIT"
 readme = "README.md"
@@ -13,6 +13,9 @@ dependencies = [
     "onnx",
     "onnxruntime",
 ]
+
+[project.scripts]
+pypryon = "pypryon.cli:main"
 
 [tool.setuptools]
 packages = ["pypryon"]
