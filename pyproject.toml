@@ -58,6 +58,8 @@ packages = ["src/pypryon"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "tests"]
+# wyoming itself imports audioop on Python < 3.13
+filterwarnings = ["ignore:'audioop' is deprecated:DeprecationWarning"]
 
 [tool.ruff]
 line-length = 120
