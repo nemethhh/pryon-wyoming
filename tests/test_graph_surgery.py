@@ -138,8 +138,9 @@ def _synthetic_model() -> bytes:
         for i in init
     ]
     graph = helper.make_graph(nodes, "synthetic", ins, [y, z], init)
-    return helper.make_model(graph, opset_imports=[helper.make_opsetid("", 11)]
-                             ).SerializeToString()
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 11)])
+    model.ir_version = 6  # like the shipped models; older onnxruntime rejects newer IRs
+    return model.SerializeToString()
 
 
 def test_synthetic_graph_runs_after_surgery() -> None:
