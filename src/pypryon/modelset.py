@@ -1,29 +1,20 @@
 """Load a Pryon model directory (model set) into typed structures.
 
-A model set is the directory referenced by ``pryon.manifest`` (object_type_name
-"ModelSetManifest", the engine's entry point: ``default_model_name`` ->
-``models[name].config_file_path``). File roles, provenance: the shipped ALEXA
-model dir under ``$EDA_DIR/firmware/donut/rootfs/system/local/models/keyword/
-en-US/ALEXA/`` and the vendored pryon-native LEDGER.md §"Audio frontend
-configuration and path" / §"Decoder: score and accept/near-miss rule".
+``pryon.manifest`` is the entry point (``default_model_name`` ->
+``models[name].config_file_path``); from there:
 
-- ``pryon.config`` — Kaldi-style ``key = value`` lines: LFBE frontend
-  (``fe.*``), scorer pointer (``scorer.nemort_config_json_filepath``),
-  keyword-spotter pointer (``keyword_spotter.config_filepath``) and the
-  id2word class table (``id2word.mapping_filepath``).
-- ``nemort_scorer_config.json`` — the ONNX file name, its feature input
-  (``model_component_mapping.input_map``) and the externalized recurrent state
-  tensors (``lstm_components`` h/c pairs + ``recurrent_components_{input,
-  output}`` conv buffers); declared names are validated against the graph.
-- ``kw.cfg.json`` — per-keyword accept/notify thresholds, client-property
-  overrides, classifier windowing and lock config.
+- ``pryon.config`` — Kaldi-style ``key = value`` lines: the LFBE front end
+  (``fe.*``) and pointers to the files below;
+- ``nemort_scorer_config.json`` — the ONNX file, its feature input and the
+  externalized recurrent state tensors (LSTM h/c pairs, conv buffers); names
+  are validated against the graph;
+- ``kw.cfg.json`` — per-keyword thresholds, client-property overrides,
+  classifier windowing and lock period;
 - ``words.shrunk.txt`` — ``word index`` lines; index 0 ``<eps>`` is the
-  softmax_output_ww background class ([background, ALEXA, STOP]).
+  softmax background class.
 
-Deliberately NOT parsed (plan non-goals): ``watermark.cfg.json`` (Amazon
-leak-tracking), the fingerprint FE (``fingerprint-fe.config`` /
-``multiple_fe.json``, itself a mini manifest), ``cmvn.6khz.mat``, and
-``op.cfg.json`` (sleep/awake state machine — an opt-in wrapper concern).
+Not parsed: ``watermark.cfg.json`` and the fingerprint front end (Amazon leak
+tracking), ``cmvn.6khz.mat``, and ``op.cfg.json`` (wake/stop UX policy).
 """
 from __future__ import annotations
 
@@ -69,10 +60,8 @@ class FeConfig:
 class KeywordSpec:
     """One keyword spotter of kw.cfg.json (keyword-orchestra.keyword-spotters[]).
 
-    The defaults below are the values present in the shipped ALEXA kw.cfg.json
-    for both spotters; the loader always parses every field from the file, so
-    they exist only to satisfy this signature's ordering and are never a
-    fallback for missing data.
+    The defaults are the ALEXA kw.cfg.json values; the loader always parses
+    every field, so they never stand in for missing data.
     """
 
     name: str                     # spotter "name"
@@ -90,7 +79,7 @@ class KeywordSpec:
 
 @dataclass(frozen=True)
 class ModelSet:
-    """Everything later tasks (FE, graph port, runner, decoder) consume."""
+    """A parsed model directory: everything the front end, runner and decoder need."""
 
     graph_path: Path            # nemort_scorer_config.json "model_filepath", resolved
     input_name: str             # its input_map[0] "component_name" (input_feats)
@@ -99,11 +88,8 @@ class ModelSet:
     fe: FeConfig
     keywords: list[KeywordSpec]
     words: dict[int, str]       # id2word mapping; 0 "<eps>" = background class
-    # Client properties named by kw.cfg overrides. No model file declares their
-    # default values; 0 (unset) is the derivation: overrides test equals==1,
-    # so an unset property must match no override. Provenance: kw.cfg.json
-    # classification-thresholds.overrides[].clientProperties[].name, and
-    # pryon_test's -p name=value push mechanism (Task 2).
+    # client properties named by kw.cfg overrides; no file declares defaults, and
+    # 0 (unset) matches no override since overrides test equals == 1
     client_prop_defaults: dict[str, int]
 
 

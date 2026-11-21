@@ -1,40 +1,26 @@
-"""NumPy port of the stock Pryon LFBE front end.
+"""NumPy port of the Pryon LFBE front end.
 
-Semantics mirror ``vendor/pryon-native/pryon_lfbe.c`` — the float32
-reimplementation measured bit-exact against the device library (vendor
-LEDGER.md, "Frontend"):
+Mirrors ``vendor/pryon-native/pryon_lfbe.c``, the float32 reimplementation
+measured bit-exact against the device library (vendor LEDGER §Frontend):
 
 * int16 -> float32 frames, 400 samples / 160 hop from sample 0, no padding;
-* DC removal (per-frame mean), preemphasis 0.96875 applied descending on the
-  un-windowed frame (first sample scaled by 1 - coeff), then the Povey
-  window (0.5 - 0.5*cos(2*pi*i/(L-1)))**0.85 computed in float64 and rounded
-  to float32;
-* rFFT-512 (Kaldi packing), power spectrum re^2 + im^2 with DC/Nyquist
-  energy in bins 0/256;
-* Kaldi MelBanks, 64 bins 80..7200 Hz, MelScale 1127*log(1 + f/700), no HTK
-  bin-0 quirk, triangle weights over the 257 power bins;
-* log with floor max(e, 1).
+* per-frame DC removal, preemphasis 0.96875 applied descending on the
+  un-windowed frame (first sample scaled by 1 - coeff), then the Povey window
+  (0.5 - 0.5*cos(2*pi*i/(L-1)))**0.85 computed in float64, stored float32;
+* rFFT-512 power spectrum, Kaldi mel banks (64 bins, 80..7200 Hz,
+  1127*log(1 + f/700), no HTK bin-0 quirk), log with floor max(e, 1).
 
-Achieved tolerance vs the bit-exact C golden vector
-(vendor/pryon-native/tests/golden_lfbe.json): max abs diff 3.9e-6 per element
-(the C path's float32 Ne10 FFT / msun logf vs numpy float64 FFT / np.log);
-asserted <= 1e-4 in tests/test_fe_golden.py.  End-to-end oracle parity
-(Task 11) is the behavioral gate.
-
-All constants carry their pryon.config provenance (Task 4 / modelset.py);
-the 16 kHz sample rate is the generation-wide fe.audio_analysis.samplerate
-(not stored in FeConfig — every model dir of this generation is 16 kHz).
+Max abs diff vs the C golden vector is 3.9e-6 per element (float32 Ne10 FFT
+there, float64 pocketfft here); tests assert <= 1e-4.
 """
 from __future__ import annotations
 
 import numpy as np
 
+from ._constants import SAMPLE_RATE as _SAMPLE_RATE
 from .modelset import FeConfig
 
-_SAMPLE_RATE = 16000  # pryon.config fe.audio_analysis.samplerate (spec §"known")
-
-# Generation defaults (ALEXA pryon.config); used when no cfg is passed to
-# frame_count().
+# ALEXA pryon.config values; used when frame_count() gets no cfg
 DEFAULT_FE = FeConfig(
     num_mel=64,
     frame_ms=25,

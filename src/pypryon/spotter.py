@@ -1,88 +1,102 @@
-"""End-to-end spotter: int16 PCM → PryonDetection events.
+"""End-to-end spotter: int16 PCM in, keyword detections out.
 
-Composes the LFBE front end (fe.py), the streaming graph runner
-(runner.py) and the kw.cfg orchestra (decoder.py).  PCM is buffered across
-feeds so arbitrary chunk sizes give one continuous, chunk-independent
-detection stream; sample indices are cumulative from the first feed after
-construction/reset (the caller's sample-index space) at 160 samples per
-10 ms LFBE frame.
-
-Input contract: int16, mono, 16 kHz, 1-D (one feed = one contiguous chunk).
-A sample rate cannot be detected from raw PCM — anything but 16 kHz audio
-shifts every index and score; the contract is stated here and in the README
-rather than guessed at runtime.
+Input contract: int16, mono, 16 kHz, 1-D. A sample rate cannot be detected
+from raw PCM, so anything else silently shifts every index and score.
 """
 from __future__ import annotations
 
-from collections import deque
+import os
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
+import onnxruntime as ort
 
-from .decoder import Orchestra, cycle_score
+from ._constants import FRAME_SAMPLES
+from .decoder import START_CYCLE, Orchestra, cycle_score
 from .fe import frame_count, lfbe_frames
-from .modelset import KeywordSpec, load_model_set
+from .modelset import KeywordSpec, ModelSet, load_model_set
 from .runner import GraphRunner
 
-_FRAME_SAMPLES = 160          # 10 ms hop
+ACCEPT = 2
+NEAR_MISS = 0
 
 
 @dataclass(frozen=True)
 class PryonDetection:
     keyword: str
-    detection_type: int       # 2 = Accept, 0 = NearMiss
+    detection_type: int       # ACCEPT (2) or NEAR_MISS (0)
     score: float
     begin_sample: int
     end_sample: int
 
     @property
     def type_name(self) -> str:
-        return {2: "Accept", 0: "NearMiss"}[self.detection_type]
+        return {ACCEPT: "Accept", NEAR_MISS: "NearMiss"}[self.detection_type]
 
 
 def _with_thresholds(specs: list[KeywordSpec],
-                     thresholds: dict[str, float] | None) -> list[KeywordSpec]:
+                     thresholds: Mapping[str, float] | None) -> list[KeywordSpec]:
     if not thresholds:
         return specs
-    return [replace(s, accept=float(thresholds[s.name])) if s.name in thresholds
-            else s for s in specs]
+    names = [s.name for s in specs]
+    for name in thresholds:
+        if name not in names:
+            raise ValueError(f"unknown keyword {name!r}; model has: {', '.join(names)}")
+    return [replace(s, accept=float(thresholds[s.name])) if s.name in thresholds else s
+            for s in specs]
 
 
 class Spotter:
-    """Streaming wake-word spotter over one Pryon model directory."""
+    """Streaming keyword spotter over one Pryon model directory.
 
-    def __init__(self, model_dir: Path, *, thresholds: dict[str, float] | None = None):
-        model_set = load_model_set(Path(model_dir))
+    ``thresholds`` overrides the kw.cfg accept threshold per keyword. A shared
+    ``session`` (from another Spotter on the same model) skips reconverting the graph.
+    """
+
+    def __init__(self, model: str | os.PathLike | ModelSet, *,
+                 thresholds: Mapping[str, float] | None = None,
+                 session: ort.InferenceSession | None = None):
+        model_set = model if isinstance(model, ModelSet) else \
+            load_model_set(Path(model).expanduser())
         self._fe_cfg = model_set.fe
         self._specs = _with_thresholds(model_set.keywords, thresholds)
-        self._runner = GraphRunner(model_set)
-        self._orchestra = Orchestra(self._specs)
-        self._scores: dict[str, deque[float]] = {k.name: deque(maxlen=64)
-                                                 for k in self._specs}
-        self._cycles_seen = 0
+        self._runner = GraphRunner(model_set, session=session)
         self.reset()
 
-    # -- lifecycle -----------------------------------------------------------
+    @property
+    def session(self) -> ort.InferenceSession:
+        return self._runner.session
+
+    @property
+    def keywords(self) -> list[str]:
+        return [s.name for s in self._specs]
+
+    @property
+    def thresholds(self) -> dict[str, float]:
+        """Effective accept threshold per keyword (before client-property overrides)."""
+        return {s.name: s.accept for s in self._specs}
 
     def reset(self) -> None:
-        """Clear all pipeline state (FE buffer, LSTM lanes, decoder)."""
+        """Clear all streaming state; sample indices restart at 0."""
         self._runner.reset()
         self._orchestra = Orchestra(self._specs)
         self._pending_pcm = np.zeros(0, np.int16)
         self._cycles_seen = 0
-        for d in self._scores.values():
-            d.clear()
+        self._history = {s.name: [] for s in self._specs}
+        self.last_scores: dict[str, np.ndarray] = {s.name: np.zeros(0) for s in self._specs}
 
     def set_client_property(self, name: str, value: int) -> None:
-        """Set a kw.cfg client property (e.g. AlarmState=1 lowers ALEXA's
-        accept threshold to its override value)."""
+        """Set a kw.cfg client property (e.g. AlarmState=1 selects its override threshold)."""
         self._runner.push_client_property(name, value)
 
-    # -- streaming -------------------------------------------------------------
-
     def feed(self, pcm: np.ndarray) -> list[PryonDetection]:
-        """Feed int16 mono 16 kHz PCM; returns detections from this chunk."""
+        """Feed int16 mono 16 kHz PCM of any length; returns detections completed by it.
+
+        ``last_scores`` then holds the per-keyword classifier score of every engine
+        cycle this call completed.
+        """
         pcm = np.asarray(pcm)
         if pcm.dtype != np.int16:
             raise ValueError(f"expected int16 PCM, got dtype {pcm.dtype}")
@@ -95,42 +109,36 @@ class Spotter:
         n = frame_count(buf.size, self._fe_cfg)
         if n == 0:
             self._pending_pcm = buf
+            self.last_scores = {s.name: np.zeros(0) for s in self._specs}
             return []
         frames = lfbe_frames(buf, self._fe_cfg)
-        # The next feed's frames must start on the 160-sample grid: frame n
-        # begins at n*160 (windows overlap the previous frame's tail by 240
-        # samples), so the pending tail is everything from n*160 on — NOT
-        # from the last frame's end, which is off-grid and would phase-shift
-        # the whole frame stream.
-        self._pending_pcm = buf[n * 160:].copy()
+        # windows overlap, so the next frame starts at n*hop, not after the last window
+        self._pending_pcm = buf[n * FRAME_SAMPLES:].copy()
 
         posteriors = self._runner.push_frames(frames)
         self._record_scores(posteriors)
         events = self._orchestra.push(posteriors, self._runner.client_properties)
-        return [PryonDetection(e.keyword, e.detection_type, e.score,
-                               e.begin_frame * _FRAME_SAMPLES,
-                               e.end_frame * _FRAME_SAMPLES)
+        return [PryonDetection(e.keyword, e.detection_type, float(e.score),
+                               max(0, int(e.begin_frame)) * FRAME_SAMPLES,
+                               int(e.end_frame) * FRAME_SAMPLES)
                 for e in events]
 
     def scores_tail(self, n: int = 1) -> dict[str, float]:
-        """Per-keyword smoothed classifier score; n>1 averages the last n."""
+        """Per-keyword classifier score of the newest cycle; n > 1 averages the last n."""
         if n < 1:
             raise ValueError("n must be >= 1")
-        out = {}
-        for name, d in self._scores.items():
-            tail = list(d)[-n:]
-            out[name] = float(np.mean(tail)) if tail else 0.0
-        return out
-
-    # -- internals -----------------------------------------------------------
+        return {name: float(np.mean(h[-n:])) if h else 0.0 for name, h in self._history.items()}
 
     def _record_scores(self, posteriors) -> None:
         rows = posteriors.lanes.shape[0]
-        if rows == 0:
-            return
-        t = self._cycles_seen + rows - 1      # global cycle of the newest row
+        self.last_scores = {}
         for spec in self._specs:
-            self._scores[spec.name].append(cycle_score(
-                posteriors.lanes[-1], t, spec.class_index, spec.trim_tail,
-                spec.window))
+            scores = np.array([
+                cycle_score(posteriors.lanes[r], t, spec.class_index, spec.trim_tail, spec.window)
+                if t >= START_CYCLE else 0.0
+                for r, t in enumerate(range(self._cycles_seen, self._cycles_seen + rows))])
+            self.last_scores[spec.name] = scores
+            history = self._history[spec.name]
+            history.extend(scores.tolist())
+            del history[:-64]
         self._cycles_seen += rows

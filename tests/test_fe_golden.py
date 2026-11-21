@@ -1,10 +1,7 @@
-"""Golden-vector test for the numpy LFBE front end.
+"""LFBE front end vs the bit-exact C golden vector (vendor tests/golden_lfbe.json).
 
-Golden frames come from vendor/pryon-native/tests/golden_lfbe.json — the
-regression output of the bit-exact C path (pryon_lfbe.c).  The numpy port is
-close, not bit-exact (float64 FFT / np.log vs Ne10 float32 FFT / msun logf);
-the per-element tolerance is 1e-4 and end-to-end oracle parity (Task 11) is
-the real gate.
+The NumPy port is close, not bit-exact (float64 FFT vs Ne10 float32); per-element
+tolerance is 1e-4, and oracle parity is the real gate.
 """
 from __future__ import annotations
 
@@ -21,7 +18,7 @@ VENDOR_GOLDEN = Path(__file__).resolve().parents[1] / (
     "vendor/pryon-native/tests/golden_lfbe.json"
 )
 
-# ALEXA pryon.config FE parameters (Task 4 / spec "What is already known").
+# ALEXA pryon.config front-end parameters
 ALEXA_FE = FeConfig(
     num_mel=64,
     frame_ms=25,
@@ -72,7 +69,7 @@ def test_silence_is_log_floor() -> None:
         (560, 2),          # frames at 0 and 160
         (719, 2),          # golden clip minus one sample: third frame incomplete
         (720, 3),          # golden clip: starts 0/160/320
-        (132720, 828),     # Task 8 chunk-independence anchor: (828-1)*160+400
+        (132720, 828),     # runner chunk-independence anchor: (828-1)*160+400
     ],
 )
 def test_frame_count_exact(pcm_len: int, expected: int) -> None:

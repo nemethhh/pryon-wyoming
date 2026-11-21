@@ -1,13 +1,5 @@
-"""End-to-end Spotter tests (Task 10).
-
-PCM in, PryonDetection out, validated against the live-oracle fixture
-(tests/fixtures/alexa_espeak_oracle.json, Task 3's parsed RESULT lines from
-the real libpryon under qemu): the espeak clip must produce the same two
-events — Accept 0.936928 @ 22240..32640 and NearMiss 0.913608 @
-61760..89920 — within the plan's 1e-3 score tolerance and exact sample
-indices.  begin_sample uses the se-head derivation measured against those
-two events (decoder module docstring); Task 11 re-validates on the full
-clip set.
+"""End-to-end Spotter on the real ALEXA model: the espeak clip must reproduce the
+oracle's Accept 0.936928 @ 22240..32640 and NearMiss 0.913608 @ 61760..89920.
 """
 from __future__ import annotations
 
@@ -50,10 +42,10 @@ def test_matches_oracle_fixture(events) -> None:
     assert len(got) == len(want), got
     for evt, ref in zip(got, want):
         assert by_type[evt.detection_type] == ref["detection_type"]
-        # knife-edge rule (Global Constraints): margin to ANY active threshold
+        # knife-edge rule: margin to ANY active threshold
         margin = min(abs(ref["classifier_score"] - t) for t in thresholds)
         if margin > 1e-2:
-            # full parity per the plan's margin rule (Global Constraints)
+            # clear of every threshold: full parity
             assert evt.score == pytest.approx(ref["classifier_score"], abs=1e-3)
             assert evt.begin_sample == ref["begin_sample"]
             assert evt.end_sample == ref["end_sample"]

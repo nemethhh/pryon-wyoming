@@ -1,12 +1,4 @@
-"""Key-phrase decoder tests (Task 9).
-
-Semantics per vendor pryon_decoder.py + kw.cfg.json: per cycle t the score
-is the max over age-windows (trim-tail 8 youngest ages dropped, width-3
-moving average) of the 25-lane softmax ring; accept at/above the (possibly
-client-property-overridden) active threshold outside the 100-frame lock;
-near-miss = peak of a non-accepting run at/above notify, emitted once the
-keyword feature window has elapsed past the peak; detection_type 2=Accept,
-0=NearMiss.
+"""kw.cfg orchestra decoder tests (semantics: vendor pryon_decoder.py + kw.cfg.json).
 """
 from __future__ import annotations
 

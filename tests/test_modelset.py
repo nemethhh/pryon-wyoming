@@ -1,18 +1,5 @@
-"""Tests for pypryon.modelset: model-set loader.
-
-The real-model test parses the shipped ALEXA model directory from the
-echo-dot-assist checkout ($EDA_DIR, else ../echo-dot-assist — same default as
-pypryon.oracle). Anchor values come from the model files themselves (verified
-against the vendored pryon-native LEDGER.md §"Audio frontend configuration and
-path" and §"Decoder: score and accept/near-miss rule (2026-11-11)"):
-kw.cfg.json has 2 spotters (ALEXA accept 0.923 / notify 0.69, AlarmState
-override 0.834; STOP accept 0.55, no notify/overrides), words.shrunk.txt maps
-{0: "<eps>", 1: "ALEXA", 2: "STOP"} (softmax_output_ww classes [background,
-ALEXA, STOP]), pryon.config gives the LFBE frontend, and the ONNX graph input
-is `input_feats` with shape [1, N, 64, 1].
-
-The error-path tests use a synthetic minimal model set (tiny hand-built ONNX,
-derived data only) so parse failures are covered without the firmware tree.
+"""Model-set loader: the real ALEXA directory (``PYPRYON_MODEL_DIR``) and every
+error path on a minimal hand-built set.
 """
 import json
 import os

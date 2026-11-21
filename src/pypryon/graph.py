@@ -1,50 +1,29 @@
-"""Mechanical portability surgery on the Pryon nemort ONNX graph.
+"""Make the shipped Pryon nemort ONNX graph run on stock onnxruntime.
 
-The shipped graph (``runtime_stateless_standard.streaming.fixed.int16.onnx``,
-opset 11 / IR 6) is rejected by stock onnxruntime for mechanical reasons
-only, ahead of its unknown Hybrid* kernels:
+Two layers:
 
-* int32 constants feed shape positions that opset-11 requires to be int64
-  (``Reshape[1]``, ``Slice[1..3]``, ``Tile[1]``, and the ``Concat`` members
-  that build shape tensors from them) — ORT: "Type Error: Type
-  'tensor(int32)' of input parameter (...) of operator (Reshape) ... is
-  invalid";
-* the ``Shape`` nodes carry a spurious ``dtype`` attribute (tf2onnx
-  artifact hinting int32 output) that ``onnx.checker`` rejects — standard
-  ``Shape`` at opset 11 is attribute-free and always emits int64, which is
-  exactly what the shape-cluster casts produce;
-* 99 data-carrying initializers are duplicated into ``graph.input``
-  (TF-exporter style), and the 5 streaming conv buffer states appear BOTH as
-  runtime inputs (with dynamic dims) and as *empty* placeholder
-  initializers, which ``onnx.checker`` rejects ("should contain one and only
-  one value field").
-
-``make_portable`` fixes exactly these, touching nothing else: int32
-shape-cluster constants get a ``Cast(to=int64)`` node inserted and the
-consumer positions rewired; initializer names are dropped from
-``graph.input`` (the conv-buffer placeholders keep their runtime-input
-declarations and lose their empty initializer stubs); every op — including
-the Hybrid* nodes and their int32 zp/sums constants — is left byte-for-byte
-as exported.
-
-ORT_LOAD_ERROR_HYBRID is the sentinel for "the graph is mechanically clean;
-the only remaining load blocker is the unknown Hybrid* ops" — Task 7's
-rewrites make it load.
+* mechanical fixes for exporter artifacts ORT rejects: int32 constants in
+  int64 shape positions, a spurious ``dtype`` attribute on ``Shape``,
+  initializers re-declared as graph inputs, and empty placeholder
+  initializers shadowing the streaming conv-buffer inputs;
+* rewrites of the custom ``HybridConv`` / ``HybridGemm`` / ``HybridLSTM``
+  kernels into standard ops implementing the measured CPUNK quantization
+  contract (vendor LEDGER §CPUNK, ``pryon_quant_model.py``).
 """
 from __future__ import annotations
 
 import io
 
+import numpy as np
 import onnx
+from onnx import TensorProto as T
 from onnx import helper
+from onnx import numpy_helper as _nh
 
+from ._constants import LANES
 from .modelset import ModelError
 
-# ORT's unknown-op failure names each unregistered node like
-# "Fatal error: HybridGemm(...) is not a registered function/op" — every
-# such name starts with the vendor kernel-family prefix.  A load error that
-# mentions no Hybrid op is a mechanical/typing failure this module (or a
-# later rewrite) must still fix.
+# every unregistered-op error from ORT names the Hybrid kernel family
 ORT_LOAD_ERROR_HYBRID = "Hybrid"
 
 
@@ -175,6 +154,7 @@ def make_portable(onnx_bytes: bytes, *, rewrite_hybrid: bool = True) -> bytes:
     # 4. Rewrite the Hybrid* kernels into standard ops (CPUNK contract).
     if rewrite_hybrid:
         _rewrite_hybrid_ops(model)
+        _drop_unused_initializers(graph)
 
     out = io.BytesIO()
     onnx.save(model, out)
@@ -184,30 +164,16 @@ def make_portable(onnx_bytes: bytes, *, rewrite_hybrid: bool = True) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# Hybrid* rewrites (Task 7): the CPUNK port.
-#
-# Semantics mirror vendor pryon_quant_model.py — the NumPy emulation measured
-# against the device library (LEDGER.md "CPUNK" section) — op for op:
-#   * every Hybrid matmul quantizes each activation row with
-#     s=(max-min)/127, inv=1/s, z=rint(-min*inv),
-#     q=clip(rint(x*inv)+z, max=127)-z (all float32), accumulates
-#     q @ (w-zw)^T in float64 (exact integer arithmetic), and scales
-#     float32(acc) * float32(s*sw).  Do NOT simplify (max-min)/127.
-#   * constant (zero-range) rows use the exact float product
-#     float32(x @ ((w-zw)*sw)^T) — Model.quant_matmul's fallback branch.
-#   * HybridConv adds its bias inside the kernel (Model.conv); HybridGemm
-#     does not (the graph's downstream Add nodes carry the bias).
-#   * HybridLSTM: gate order iofc, B=[Wb,Rb] both added, cell math in
-#     float64 with float32 h/c I/O (Model.lstm_cell); rewritten as a Loop
-#     over the sequence dim so any T works in one call.  Lane-ring zeroing
-#     (host resets lane t%25) stays host-side, exactly like Model.stream.
-#   * BatchNormalization nodes are rewritten to the emulation's fused
-#     epilogue (float64 mul+add, single rounding — Model.bn) so the ported
-#     graph stays layer-exact against the emulation.
+# Hybrid* rewrites. Each mirrors vendor pryon_quant_model.py op for op:
+#   * activation rows quantize as s=(max-min)/127, inv=1/s, z=rint(-min*inv),
+#     q=clip(rint(x*inv)+z, max=127)-z in float32 (do NOT simplify), the
+#     accumulator q @ (w-zw)^T is exact in float64, output float32(acc)*float32(s*sw);
+#   * constant rows (max == min) take the exact float product instead;
+#   * HybridConv adds its bias in-kernel, HybridGemm does not;
+#   * HybridLSTM: gates i,o,f,c, B=[Wb,Rb] both added, cell math in float64,
+#     unrolled as a Loop over T; lane zeroing stays host-side (runner.py);
+#   * BatchNormalization becomes the emulation's fused float64 epilogue.
 
-import numpy as np  # noqa: E402
-from onnx import TensorProto as T  # noqa: E402
-from onnx import numpy_helper as _nh  # noqa: E402
 
 
 class _Site:
@@ -428,7 +394,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     """HybridLSTM → Loop over T carrying h/c, one CPUNK cell per step."""
     site = _Site(node.name + "__port")
     nd = []
-    x = node.input[0]                     # [T, 25, 100]
+    x = node.input[0]                     # [T, lanes, n_in]
     w, sw_w, zw_w = (arrays[node.input[i]] for i in (1, 2, 3))
     r, sw_r, zw_r = (arrays[node.input[i]] for i in (5, 6, 7))
     b = arrays[node.input[9]].ravel()     # [800] = [Wb, Rb]
@@ -446,7 +412,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     nd.append(site.node("Squeeze", [seq], [seqs], axes=[0]))
     true_c = site.init(np.array(True), "true")
     h0 = site.t("h0")
-    nd.append(site.node("Squeeze", [node.input[11]], [h0], axes=[0]))   # [25,100]
+    nd.append(site.node("Squeeze", [node.input[11]], [h0], axes=[0]))   # [lanes, hid]
     c0 = site.t("c0")
     nd.append(site.node("Squeeze", [node.input[12]], [c0], axes=[0]))
 
@@ -456,14 +422,14 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     vi = lambda n, t_, s: onnx.helper.make_tensor_value_info(n, t_, s)
     b_iter = vi("_iter", T.INT64, [])
     b_cond = vi("_cond", T.BOOL, [])
-    b_h = vi("_h", T.FLOAT, [25, hid])
-    b_c = vi("_c", T.FLOAT, [25, hid])
-    b_x = vi("_x", T.FLOAT, [None, 25, n_in])
+    b_h = vi("_h", T.FLOAT, [LANES, hid])
+    b_c = vi("_c", T.FLOAT, [LANES, hid])
+    b_x = vi("_x", T.FLOAT, [None, LANES, n_in])
     b_ocond = vi("_ocond", T.BOOL, [])
-    b_oh = vi("_oh", T.FLOAT, [25, hid])
-    b_oc = vi("_oc", T.FLOAT, [25, hid])
-    b_ox = vi("_ox", T.FLOAT, [None, 25, n_in])
-    b_oy = vi("_oy", T.FLOAT, [1, 25, hid])
+    b_oh = vi("_oh", T.FLOAT, [LANES, hid])
+    b_oc = vi("_oc", T.FLOAT, [LANES, hid])
+    b_ox = vi("_ox", T.FLOAT, [None, LANES, n_in])
+    b_oy = vi("_oy", T.FLOAT, [1, LANES, hid])
 
     it_c = body.t("iter")
     bn.append(body.node("Unsqueeze", ["_iter"], [it_c], axes=[0]))
@@ -473,8 +439,8 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     bn.append(body.node("Slice", ["_x", it_c, it1,
                                   body.init(np.array([0], np.int64), "a0")], [xt1]))
     xt = body.t("xt")
-    bn.append(body.node("Squeeze", [xt1], [xt], axes=[0]))            # [25,100]
-    gx = _quant_matmul(body, xt, w[0], sw_w[0], zw_w[0], bn)          # [25,400]
+    bn.append(body.node("Squeeze", [xt1], [xt], axes=[0]))            # [lanes, hid]
+    gx = _quant_matmul(body, xt, w[0], sw_w[0], zw_w[0], bn)          # [lanes, 4*hid]
     gh = _quant_matmul(body, "_h", r[0], sw_r[0], zw_r[0], bn)
     g32 = body.t("g32")
     bn.append(body.node("Add", [gx, gh], [g32]))
@@ -485,7 +451,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     gw = body.t("gw")
     bn.append(body.node("Add", [g64, i_wb], [gw]))
     g = body.t("g")
-    bn.append(body.node("Add", [gw, i_rb], [g]))                      # f64 [25,400]
+    bn.append(body.node("Add", [gw, i_rb], [g]))                      # f64 [lanes, 4*hid]
     sl = lambda tag, s0: (body.init(np.array([s0], np.int64), f"s{tag}0"),
                           body.init(np.array([s0 + hid], np.int64), f"s{tag}1"),
                           body.init(np.array([1], np.int64), f"a1{tag}"))
@@ -528,10 +494,10 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
         bn, node.name + "__bodygraph",
         [b_iter, b_cond, b_h, b_c, b_x],
         [onnx.helper.make_tensor_value_info("_ocond_o", T.BOOL, []),
-         onnx.helper.make_tensor_value_info(b_oh_actual, T.FLOAT, [25, hid]),
-         onnx.helper.make_tensor_value_info(b_oc_actual, T.FLOAT, [25, hid]),
-         onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, 25, n_in]),
-         onnx.helper.make_tensor_value_info(y_scan, T.FLOAT, [1, 25, hid])],
+         onnx.helper.make_tensor_value_info(b_oh_actual, T.FLOAT, [LANES, hid]),
+         onnx.helper.make_tensor_value_info(b_oc_actual, T.FLOAT, [LANES, hid]),
+         onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, LANES, n_in]),
+         onnx.helper.make_tensor_value_info(y_scan, T.FLOAT, [1, LANES, hid])],
         [])
     body_graph.initializer.extend(body.inits)
     body_graph.node.insert(0, onnx.helper.make_node(
@@ -543,7 +509,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     nd.append(site.node("Unsqueeze", [h_f], [node.output[1]], axes=[0]))
     nd.append(site.node("Unsqueeze", [c_f], [node.output[2]], axes=[0]))
     # Y: Loop scanned output stacks body outputs along a new leading axis:
-    # body [1,25,100] → [T,1,25,100], exactly the ONNX LSTM Y layout.
+    # stacked body outputs [T,1,lanes,hid] are exactly the ONNX LSTM Y layout
     nd.append(site.node("Identity", [y_all], [node.output[0]]))
     return nd, site.inits
 
@@ -602,3 +568,12 @@ def _rewrite_hybrid_ops(model) -> None:
         graph.initializer.extend(inits_)
     del graph.node[:]
     graph.node.extend(new_nodes)
+
+
+def _drop_unused_initializers(graph) -> None:
+    """The rewritten kernels' original weights would make ORT log a warning per tensor."""
+    used = {i for n in graph.node for i in n.input}
+    used |= {o.name for o in graph.output}
+    kept = [i for i in graph.initializer if i.name in used]
+    del graph.initializer[:]
+    graph.initializer.extend(kept)

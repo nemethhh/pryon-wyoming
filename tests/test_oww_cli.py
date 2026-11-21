@@ -1,4 +1,5 @@
-"""openWakeWord-adjacent adapter + CLI tests (Task 12)."""
+"""CLI tests on the real ALEXA model.
+"""
 from __future__ import annotations
 
 import os
@@ -11,7 +12,6 @@ import numpy as np
 import pytest
 
 from pypryon import Spotter
-from pypryon.oww import PryonModel
 
 from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
 
@@ -19,27 +19,6 @@ pytestmark = requires_model
 CLIP = ESPEAK_WAV
 
 CHUNK = 1280          # 80 ms at 16 kHz
-
-
-def test_predict_scores_and_detections() -> None:
-    model = PryonModel(MODEL_DIR)
-    pcm = load_wav16(CLIP)
-    scores = []
-    for i in range(0, pcm.size, CHUNK):
-        scores.append(model.predict(pcm[i:i + CHUNK]))
-    alexa = [s["ALEXA"] for s in scores]
-    assert max(alexa) >= 0.9
-    assert any(s["STOP"] < 0.9 for s in scores)
-    dets = model.detections
-    assert dets, "no detections consumed"
-    assert any(d.detection_type == 2 for d in dets)
-    assert model.detections == []      # consumed on read
-
-
-def test_predict_rejects_float() -> None:
-    model = PryonModel(MODEL_DIR)
-    with pytest.raises(ValueError, match="int16"):
-        model.predict(np.zeros(CHUNK, np.float32))
 
 
 def _cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:

@@ -49,3 +49,13 @@ def test_portable_runs_in_ort(synth_dir) -> None:
     assert post.lanes.shape == (30, 25, 3) and post.se_lanes.shape == (30, 25, 2)
     assert np.isfinite(post.lanes).all() and np.isfinite(post.se_lanes).all()
     np.testing.assert_allclose(post.lanes.sum(axis=-1), 1.0, atol=1e-5)
+
+
+def test_portable_has_no_unused_initializers(synth_dir) -> None:
+    model = onnx.load_from_string(make_portable((synth_dir / "model.onnx").read_bytes()))
+    used = {i for n in model.graph.node for i in n.input}
+    for node in model.graph.node:
+        for attr in node.attribute:
+            if attr.type == onnx.AttributeProto.GRAPH:
+                used |= {i for n in attr.g.node for i in n.input}
+    assert [i.name for i in model.graph.initializer if i.name not in used] == []

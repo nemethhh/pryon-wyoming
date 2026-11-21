@@ -1,16 +1,5 @@
-"""Hybrid op port tests (Task 7).
-
-``make_portable`` (with its default hybrid rewrites) must turn the ALEXA
-graph into something stock onnxruntime LOADS and RUNS, and the ported graph
-must agree with the vendor NumPy emulation (``pryon_quant_model.Model``,
-the oracle for this task) to ≤1e-5 per output when driven cycle-by-cycle
-(6 LFBE frames per call, host-side LSTM lane-ring zeroing — the streaming
-contract of Model.stream).
-
-Provenance of the quantization contract: vendor LEDGER.md "CPUNK" section /
-pryon_quant_model.quantize_activation_rows — per-row asymmetric activation
-quant (max−min)/127, rint, saturate at 127; int8 weights with per-row
-scales; float bias/output; LSTM iofc gate order.
+"""The ported ALEXA graph loads in stock onnxruntime and matches the vendor NumPy
+emulation (``pryon_quant_model.Model``) to <=1e-5 per output, cycle by cycle.
 """
 from __future__ import annotations
 

@@ -1,28 +1,16 @@
-"""Key-phrase decoder: kw.cfg.json orchestra semantics.
+"""kw.cfg.json keyword orchestra: per-cycle scores to Accept / NearMiss events.
 
-Mirrors vendor pryon_decoder.py (measured against stock RESULT metadata —
-LEDGER §"Decoder: score and accept/near-miss rule") on the streaming side:
+Rules (vendor LEDGER §Decoder, measured against libpryon RESULT metadata):
 
-* per engine cycle t, score(t) = max over age-windows of the 25-lane
-  softmax ring: ages 9..25 (trim-tail 8 youngest dropped), width-3 moving
-  average, lane of age a read from ring row (t - a + 1) % 25;
-* accept on the first cycle outside the 100-frame lock whose score is ≥ the
-  active threshold (client-property overrides may lower it); the accept's
-  end frame is 6·(t+1) LFBE frames (= 960·(t+1) samples);
-* near-miss: the peak of a non-accepting run ≥ notify, emitted at the first
-  later cycle whose end frame passes 6·(peak+1) + keyword-feature-window;
-* detection_type 2 = Accept, 0 = NearMiss (types 1/3 are unknown to the
-  vendor rule — never synthesized here).
-
-Detection.begin_frame derives from the fc_output_se head (the vendor's
-underived kwSampleStartIndex): at the accept/peak cycle t, over the same
-age window the score rule uses (trim-tail+1..25), take the age whose se
-posterior is maximal (column 1 of fc_output_se — empirically the utterance
-start column; kw.cfg's scorer-index naming is swapped against observed
-behavior) and set begin_frame = 6*(t - a* + 1) + 1.  Fitted on the two
-live-oracle espeak events (begin 22240 = 960*23+160, 61760 = 960*64+160)
-and re-validated by Task 11's parity suite; end_frame stays the vendor
-rule (6*(t+1) for accepts, +keyword-feature-window for near-misses).
+* score(t) = max over lane ages trim_tail+1..25 of a width-``window`` moving
+  average of the keyword's softmax; the lane of age a is ring row (t-a+1) % 25;
+* Accept on the first cycle past the lock whose score reaches the active
+  threshold (client-property overrides may lower it); end frame 6*(t+1);
+* NearMiss: the peak of a non-accepting run at or above notify, emitted once
+  the stream passes 6*(peak+1) + keyword-feature-window frames;
+* begin frame: over the same age window, the age a* whose se-head start
+  posterior is largest; begin = 6*(t-a*+1)+1 (fitted to oracle events,
+  re-validated by the parity suite).
 """
 from __future__ import annotations
 
@@ -30,12 +18,14 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from ._constants import CYCLE_FRAMES, LANES
 from .modelset import KeywordSpec
 from .runner import Posteriors
 
-# Cycles before the first decoded one (vendor decode default start=5: the
-# young ring needs settled lanes — measured, not from kw.cfg).
+# first decoded cycle: the young ring needs settled lanes (measured)
 START_CYCLE = 5
+# fc_output_se column of the utterance-start posterior (kw.cfg's naming is swapped)
+SE_START_COLUMN = 1
 
 
 @dataclass(frozen=True)
@@ -44,33 +34,25 @@ class Detection:
     detection_type: int        # 2 = Accept, 0 = NearMiss
     score: float
     peak_frame: int            # engine cycle of the peak
-    begin_frame: int | None    # LFBE frame; None until the se derivation
-    end_frame: int             # LFBE frame (see module docstring)
+    begin_frame: int           # LFBE frame
+    end_frame: int             # LFBE frame
 
 
-SE_START_COLUMN = 1   # fc_output_se column of the utterance-start posterior
+def _ages(trim_tail: int) -> np.ndarray:
+    return np.arange(trim_tail + 1, LANES + 1)
 
 
 def keyword_begin_frame(se_lanes_row: np.ndarray, t: int, trim_tail: int) -> int:
-    """kwSampleStartIndex rule: age-argmax of the start posterior over the
-    score rule's age window, mapped to the age's absolute cycle (+1 frame,
-    the engine's frame phase — see module docstring provenance)."""
-    ages = np.arange(trim_tail + 1, 26)
-    priors = se_lanes_row[(t - ages + 1) % 25, SE_START_COLUMN]
-    a = ages[int(np.argmax(priors))]
-    return 6 * (t - a + 1) + 1
+    ages = _ages(trim_tail)
+    priors = se_lanes_row[(t - ages + 1) % LANES, SE_START_COLUMN]
+    a = int(ages[int(np.argmax(priors))])
+    return CYCLE_FRAMES * (t - a + 1) + 1
 
 
 def cycle_score(lanes_row: np.ndarray, t: int, class_index: int,
                 trim_tail: int, window: int) -> float:
-    """Score of one cycle's 25-lane ring row (vendor pryon_decoder.cycle_score).
-
-    Ages trim_tail+1..25, lane of age a at ring row (t - a + 1) % 25;
-    width-`window` moving average over consecutive ages, then max.
-    """
-    ages = np.arange(trim_tail + 1, 26)
-    ring = np.arange(25)
-    a = lanes_row[(t - ages + 1) % 25, class_index].astype(np.float64)
+    """Classifier score of one cycle's 25-lane softmax ring (vendor pryon_decoder.cycle_score)."""
+    a = lanes_row[(t - _ages(trim_tail) + 1) % LANES, class_index].astype(np.float64)
     n = a.size
     ma = sum(a[i:n - window + 1 + i] for i in range(window)) / window
     return float(ma.max())
@@ -82,22 +64,18 @@ class _KeywordState:
     def __init__(self, spec: KeywordSpec):
         self.spec = spec
         self.lock_until = -1
-        self.run: tuple[float, int] | None = None   # (peak score, peak cycle)
+        self.run: tuple[float, int, int] | None = None   # (peak score, peak cycle, begin frame)
 
 
 class Orchestra:
-    """Streaming kw.cfg decision layer over runner posteriors."""
+    """Streaming decision layer over runner posteriors."""
 
-    def __init__(self, keywords: list[KeywordSpec], buffer: int = 200):
-        # `buffer` is kw.cfg's orchestra buffer-size; this rule reads only
-        # the current cycle's ring (history lives in the lanes), so it is
-        # accepted for interface fidelity and reserved for the se head.
-        self._buffer = buffer
+    def __init__(self, keywords: list[KeywordSpec]):
         self._states = [_KeywordState(spec) for spec in keywords]
         self._cycle = 0
 
-    def _active_threshold(self, spec: KeywordSpec,
-                          client_props: dict[str, int]) -> float:
+    @staticmethod
+    def _active_threshold(spec: KeywordSpec, client_props: dict[str, int]) -> float:
         for prop, equals, accept in spec.overrides:
             if client_props.get(prop, 0) == equals:
                 return accept
@@ -108,15 +86,12 @@ class Orchestra:
         """Decode one push's posteriors; returns events in cycle order."""
         client_props = client_props or {}
         events: list[Detection] = []
-        lanes = posteriors.lanes
-        se_lanes = posteriors.se_lanes
-        if se_lanes is None:
-            se_lanes = np.zeros(lanes.shape[:2] + (2,), np.float32)
-        for row in range(lanes.shape[0]):
+        for row in range(posteriors.lanes.shape[0]):
             t = self._cycle + row
             for st in self._states:
-                self._step(st, t, lanes[row], se_lanes[row], client_props, events)
-        self._cycle += lanes.shape[0]
+                self._step(st, t, posteriors.lanes[row], posteriors.se_lanes[row],
+                           client_props, events)
+        self._cycle += posteriors.lanes.shape[0]
         return events
 
     def _step(self, st: _KeywordState, t: int, lanes_row: np.ndarray,
@@ -125,24 +100,20 @@ class Orchestra:
         spec = st.spec
         if t < START_CYCLE:
             return
-        s = cycle_score(lanes_row, t, spec.class_index, spec.trim_tail,
-                        spec.window)
-        end_frame = 6 * (t + 1)
+        s = cycle_score(lanes_row, t, spec.class_index, spec.trim_tail, spec.window)
+        end_frame = CYCLE_FRAMES * (t + 1)
         if end_frame > st.lock_until and s >= self._active_threshold(spec, client_props):
-            events.append(Detection(
-                spec.name, 2, s, t,
-                keyword_begin_frame(se_lanes_row, t, spec.trim_tail),
-                end_frame))
+            events.append(Detection(spec.name, 2, s, t,
+                                    keyword_begin_frame(se_lanes_row, t, spec.trim_tail),
+                                    end_frame))
             st.lock_until = end_frame + spec.lock
             st.run = None
             return
-        notify = spec.notify
-        if notify is not None and s >= notify and end_frame > st.lock_until:
+        if spec.notify is not None and s >= spec.notify and end_frame > st.lock_until:
             if st.run is None or s > st.run[0]:
-                begin = keyword_begin_frame(se_lanes_row, t, spec.trim_tail)
-                st.run = (s, t, begin)
-        elif st.run is not None and 6 * (st.run[1] + 1) + spec.kw_window <= end_frame:
-            events.append(Detection(
-                spec.name, 0, st.run[0], st.run[1], st.run[2],
-                6 * (st.run[1] + 1) + spec.kw_window))
+                st.run = (s, t, keyword_begin_frame(se_lanes_row, t, spec.trim_tail))
+        elif st.run is not None and CYCLE_FRAMES * (st.run[1] + 1) + spec.kw_window <= end_frame:
+            peak, peak_t, begin = st.run
+            events.append(Detection(spec.name, 0, peak, peak_t, begin,
+                                    CYCLE_FRAMES * (peak_t + 1) + spec.kw_window))
             st.run = None

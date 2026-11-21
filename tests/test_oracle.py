@@ -1,12 +1,7 @@
-"""Tests for pypryon.oracle: oracle runner + detection parser.
+"""Oracle output parser and runner argument checks.
 
-REAL_ORACLE_OUTPUT is a verbatim paste of the pinned pryon_test oracle's smoke-run
-output, captured in Task 2 (build/oracle/smoke.stdout + build/oracle/smoke.stderr,
-gitignored on disk — derived log data only, no audio or model bytes). stdout lines
-come first, then stderr lines, exactly as run_oracle concatenates the two captured
-streams. Expected values match the Task 2 report and vendor
-pryon-native/LEDGER.md §"Decoder: score and accept/near-miss rule (2026-11-11)"
-(accept 0.923 / notify 0.69; RESULT type=2 is Accept, type=0 is Near-miss).
+REAL_ORACLE_OUTPUT is a captured pryon_test run (log text only): stdout first,
+then stderr, as run_oracle concatenates them.
 """
 import json
 from pathlib import Path
@@ -82,7 +77,7 @@ def test_parse_type_contradiction_raises() -> None:
 
 
 def test_alexa_espeak_fixture_anchor_values() -> None:
-    """The committed fixture (a fresh oracle run on the espeak clip, Task 3 step 3)."""
+    """The committed fixture (a fresh oracle run on the espeak clip)."""
     fixture = Path(__file__).parent / "fixtures" / "alexa_espeak_oracle.json"
     assert json.loads(fixture.read_text()) == EXPECTED_ALEXA_DETECTIONS
 

@@ -1,23 +1,28 @@
 """pypryon: run Amazon Pryon wake-word models on stock onnxruntime.
 
-Public API: `Spotter` (PCM in, detections out) and `PryonDetection`;
-lower layers (`load_model_set`, `lfbe_frames`, `GraphRunner`, `Orchestra`)
-are importable for advanced use.
+``Spotter`` is the entry point (int16 16 kHz PCM in, ``PryonDetection`` out);
+the lower layers are importable for advanced use.
 """
 from .decoder import Detection, Orchestra
 from .fe import lfbe_frames
-from .modelset import ModelSet, load_model_set
+from .modelset import ModelError, ModelSet, load_model_set
 from .runner import GraphRunner, Posteriors
-from .spotter import PryonDetection, Spotter
+from .spotter import ACCEPT, NEAR_MISS, PryonDetection, Spotter
+
+__version__ = "0.1.0"
 
 __all__ = [
+    "ACCEPT",
+    "NEAR_MISS",
     "Detection",
     "GraphRunner",
+    "ModelError",
     "ModelSet",
     "Orchestra",
     "Posteriors",
     "PryonDetection",
     "Spotter",
+    "__version__",
     "lfbe_frames",
     "load_model_set",
 ]

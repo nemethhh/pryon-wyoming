@@ -1,18 +1,11 @@
-"""Oracle parity suite (Task 11) — the M1+M2 acceptance gate.
+"""Oracle parity: pypryon vs the real libpryon under qemu-arm.
 
-Every clip (the espeak ALEXA clip plus the four synthetic negatives from
-tools/make_clips.py) is run through BOTH the pinned oracle (real libpryon
-under qemu-arm via pypryon.oracle) and the pypryon Spotter; events must
-match on (keyword, type, begin/end sample) with |Δscore| ≤ 1e-3 whenever
-the oracle event's margin to any active threshold (accept or notify,
-including overrides) exceeds 1e-2.  Knife-edge events (margin < 1e-2) are
-logged as `boundary` and not failed (Global Constraints / spec goal 2).
-
-The parsed oracle runs are committed as JSON fixtures (derived data); with
-the firmware present the live oracle must reproduce them, and the Spotter
-is compared against the live run.  Without $EDA_DIR the live runs skip
-with a message and the Spotter is still checked against the committed
-fixtures on the regenerable synthetic clips.
+Every clip (the espeak clip plus the synthetic negatives from
+tools/make_clips.py) must give the same events (keyword, type, begin/end
+sample) with |score delta| <= 1e-3 when the oracle event's margin to every
+active threshold exceeds 1e-2; knife-edge events are logged as `boundary`.
+The parsed oracle runs are committed as JSON fixtures; with
+PYPRYON_ORACLE_ROOTFS set the live oracle must still reproduce them.
 """
 from __future__ import annotations
 

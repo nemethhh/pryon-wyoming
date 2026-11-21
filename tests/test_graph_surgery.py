@@ -1,15 +1,5 @@
-"""Mechanical graph surgery tests (Task 6).
-
-The real-graph test exercises the shipped ALEXA ONNX from the
-echo-dot-assist checkout ($EDA_DIR, else ../echo-dot-assist): after
-``make_portable`` the graph must be mechanically loadable — int32
-shape-position inputs cast to int64, initializer names out of graph.input
-(keeping the true runtime/state inputs), onnx.checker clean — with stock
-onnxruntime still refusing it *only* over the unknown Hybrid* ops (the
-ORT_LOAD_ERROR_HYBRID condition Task 7 resolves).
-
-A firmware-free synthetic test pins the same mechanics on a graph small
-enough that ORT runs it end-to-end after surgery.
+"""Mechanical graph surgery: after ``make_portable(rewrite_hybrid=False)`` the graph
+is onnx.checker clean and ORT refuses it only over the unknown Hybrid* ops.
 """
 from __future__ import annotations
 
@@ -23,10 +13,6 @@ import pytest
 from onnx import helper, numpy_helper
 
 from pypryon.graph import ORT_LOAD_ERROR_HYBRID, make_portable
-
-# Task 7 grew make_portable's default to also rewrite the Hybrid* ops; the
-# mechanical-only layer it builds on is still exposed (and tested here) via
-# rewrite_hybrid=False.
 
 from conftest import MODEL_DIR, requires_model
 
@@ -65,9 +51,8 @@ def _int32_shape_inputs(graph) -> list[str]:
 def _checker_minus_hybrid(model: onnx.ModelProto) -> None:
     """Structural check with Hybrid* ops on a scratch custom domain.
 
-    Hybrid* ops are declared in the default ai.onnx domain (spec §"What is
-    already known"), which no stock checker accepts; renaming their domain
-    for the check makes the checker tolerate them as custom ops while still
+    Hybrid* ops sit in the default ai.onnx domain, which no stock checker
+    accepts; a custom domain makes the checker skip them while still
     validating every other node, initializer and io declaration.
     """
     import copy

@@ -1,17 +1,5 @@
-"""Streaming graph runner tests (Task 8).
-
-The runner drives the ported graph one engine cycle (6 LFBE frames) per
-session.run — the cycle is the engine's quantum (scorer.score_upsampling:
-initialize.frame_count 6, skip-frame-count 5; provenance: kw.cfg.json /
-vendor LEDGER) — carrying LSTM h/c + conv buffers, and doing the host-side
-lane-ring zeroing of the vendor LSTM contract (Model.stream:
-``h[t % 25 if t else slice(None)] = 0``, pryon_lstm_analysis.py: each lane
-a ≤1.5 s sliding window, host resets lanes ring-wise).
-
-Posteriors carry the full 25-lane softmax ring (``lanes``) in addition to
-the per-cycle per-class max views (``ww``/``se``): the kw.cfg decoder rule
-is defined over the ring by lane age (vendor pryon_decoder.cycle_score),
-which a collapsed max cannot reproduce.
+"""Streaming graph runner: one 6-frame cycle per session.run, host-side lane-ring
+zeroing, and the full 25-lane ring in Posteriors (the decoder scores by lane age).
 """
 from __future__ import annotations
 
@@ -32,7 +20,7 @@ pytestmark = requires_model
 
 
 def golden_pcm(n_samples: int) -> np.ndarray:
-    """LCG golden rule (vendor tests / Task 5): i*73 % 20001 - 10000."""
+    """LCG golden rule (vendor tests): i*73 % 20001 - 10000."""
     return ((np.arange(n_samples, dtype=np.int64) * 73) % 20001 - 10000).astype(np.int16)
 
 
