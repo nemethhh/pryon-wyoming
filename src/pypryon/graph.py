@@ -38,6 +38,8 @@ import io
 import onnx
 from onnx import helper
 
+from .modelset import ModelError
+
 # ORT's unknown-op failure names each unregistered node like
 # "Fatal error: HybridGemm(...) is not a registered function/op" — every
 # such name starts with the vendor kernel-family prefix.  A load error that
@@ -330,7 +332,10 @@ def _rewrite_hybrid_conv(graph, node, arrays) -> list:
     a = {at.name: onnx.helper.get_attribute_value(at) for at in node.attribute}
     kh, kw = a["kernel_shape"][-2:]
     sh, sf = a.get("strides", [1, 1])[-2:]
-    assert a.get("dilations", [1, 1]) == [1, 1] and a["data_format"] == b"NCHW"
+    if list(a.get("dilations", [1, 1])) != [1, 1]:
+        raise ModelError(f"{node.name}: HybridConv dilations {list(a['dilations'])} unsupported")
+    if a.get("data_format", b"NCHW") != b"NCHW":
+        raise ModelError(f"{node.name}: HybridConv data_format {a['data_format']!r} unsupported")
     site = _Site(node.name + "__port")
     x = node.input[0]
     w, sw, zw, bias = (arrays[node.input[i]] for i in (1, 2, 3, 5))
@@ -376,7 +381,7 @@ def _rewrite_hybrid_conv(graph, node, arrays) -> list:
     ax3 = site.init(np.array([3], np.int64), "ax3")
     f_slices = []
     for kj in range(kw):
-        s0, s1 = kj * sf, kj * sf + sf * (fo - 1) + 1
+        s0, s1 = kj, kj + sf * (fo - 1) + 1
         s = site.t(f"fkj{kj}")
         nd.append(site.node("Slice", [cat_t,
                                       site.init(np.array([s0], np.int64), f"fs{kj}"),
@@ -427,7 +432,8 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     w, sw_w, zw_w = (arrays[node.input[i]] for i in (1, 2, 3))
     r, sw_r, zw_r = (arrays[node.input[i]] for i in (5, 6, 7))
     b = arrays[node.input[9]].ravel()     # [800] = [Wb, Rb]
-    hid = w.shape[-1]                     # 100
+    hid = r.shape[-1]
+    n_in = w.shape[-1]
 
     # max_trip_count = Shape(x)[0] as scalar
     shp = site.t("shp")
@@ -452,11 +458,11 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     b_cond = vi("_cond", T.BOOL, [])
     b_h = vi("_h", T.FLOAT, [25, hid])
     b_c = vi("_c", T.FLOAT, [25, hid])
-    b_x = vi("_x", T.FLOAT, [None, 25, hid])
+    b_x = vi("_x", T.FLOAT, [None, 25, n_in])
     b_ocond = vi("_ocond", T.BOOL, [])
     b_oh = vi("_oh", T.FLOAT, [25, hid])
     b_oc = vi("_oc", T.FLOAT, [25, hid])
-    b_ox = vi("_ox", T.FLOAT, [None, 25, hid])
+    b_ox = vi("_ox", T.FLOAT, [None, 25, n_in])
     b_oy = vi("_oy", T.FLOAT, [1, 25, hid])
 
     it_c = body.t("iter")
@@ -524,7 +530,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
         [onnx.helper.make_tensor_value_info("_ocond_o", T.BOOL, []),
          onnx.helper.make_tensor_value_info(b_oh_actual, T.FLOAT, [25, hid]),
          onnx.helper.make_tensor_value_info(b_oc_actual, T.FLOAT, [25, hid]),
-         onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, 25, hid]),
+         onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, 25, n_in]),
          onnx.helper.make_tensor_value_info(y_scan, T.FLOAT, [1, 25, hid])],
         [])
     body_graph.initializer.extend(body.inits)
