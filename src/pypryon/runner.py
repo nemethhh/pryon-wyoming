@@ -47,24 +47,25 @@ class Posteriors:
 
 
 class GraphRunner:
-    """Stateful streaming driver: LFBE frames in, per-cycle posteriors out."""
+    """Stateful streaming driver for a single-graph model: LFBE frames in, cycles out."""
 
     def __init__(self, model_set: ModelSet, session: ort.InferenceSession | None = None):
-        self.session = session or create_session(model_set)
-        self._input_name = model_set.input_name
-        out_names = [o.name for o in self.session.get_outputs()]
-        self._input_shapes = {i.name: _concrete(i.shape) for i in self.session.get_inputs()}
+        from .davs import GraphInput, GraphSpec
+        from .pipeline import StageRunner
 
-        # 2-D states are LSTM h/c rings (lane-zeroed per cycle); the rest are
-        # streaming conv buffers, passed through unchanged
-        self._lstm: list[tuple[str, str]] = []
-        self._buffers: list[tuple[str, str]] = []
-        for inp, out in zip(model_set.state_inputs, model_set.state_outputs, strict=True):
+        self.session = session or create_session(model_set)
+        shapes = {i.name: i.shape for i in self.session.get_inputs()}
+        out_names = {o.name for o in self.session.get_outputs()}
+        for out in model_set.state_outputs:
             if out not in out_names:
                 raise ValueError(f"state output {out!r} missing from graph")
-            target = self._lstm if len(self._input_shapes[inp]) == 2 else self._buffers
-            target.append((inp, out))
-        self._out_pos = {name: pos for pos, name in enumerate(out_names)}
+        # 2-D states are the LSTM h/c rings; the loader lists them before the conv buffers
+        lstm = sum(len(shapes[name]) == 2 for name in model_set.state_inputs)
+        spec = GraphSpec("model", model_set.graph_path, [GraphInput(model_set.input_name, "audio", None)],
+                         {SOFTMAX_WW: None, FC_SE: None}, list(model_set.state_inputs),
+                         list(model_set.state_outputs), lstm, CYCLE_FRAMES, model_set.fe.num_mel)
+        self._stage = StageRunner(spec, self.session, {})
+        self._input_name = model_set.input_name
         self._num_classes = len(model_set.words)
         self._feats = model_set.fe.num_mel
         self.client_properties = dict(model_set.client_prop_defaults)
@@ -72,9 +73,7 @@ class GraphRunner:
 
     def reset(self) -> None:
         """Zero LSTM/conv state and the cycle counter."""
-        self._states = {inp: np.zeros(self._input_shapes[inp], np.float32)
-                        for inp, _ in self._lstm + self._buffers}
-        self._cycle = 0
+        self._stage.reset()
         self._pending = np.zeros((0, self._feats), np.float32)
 
     def push_client_property(self, name: str, value: int) -> None:
@@ -96,26 +95,10 @@ class GraphRunner:
                               np.zeros((0, LANES, 2), np.float32))
         lanes, ses = [], []
         for c in range(n_cycles):
-            ww, se = self._run_cycle(buf[c * CYCLE_FRAMES:(c + 1) * CYCLE_FRAMES])
-            lanes.append(ww)
-            ses.append(se)
+            cycle = buf[c * CYCLE_FRAMES:(c + 1) * CYCLE_FRAMES]
+            out = self._stage.step({self._input_name: cycle[None, :, :, None]})
+            lanes.append(out[SOFTMAX_WW][:, 0, :])
+            ses.append(out[FC_SE][:, 0, :])
         lanes_v, se_v = np.stack(lanes), np.stack(ses)
         return Posteriors(ww=lanes_v.max(axis=1), se=se_v.max(axis=1),
                           lanes=lanes_v, se_lanes=se_v)
-
-    def _run_cycle(self, cycle_frames: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        feeds = dict(self._states)
-        feeds[self._input_name] = cycle_frames[None, :, :, None]
-        for inp, _ in self._lstm:
-            if self._cycle == 0:
-                feeds[inp] = np.zeros_like(feeds[inp])
-            else:
-                state = feeds[inp].copy()
-                state[self._cycle % LANES] = 0.0
-                feeds[inp] = state
-        results = self.session.run(None, feeds)
-        for inp, out in self._lstm + self._buffers:
-            self._states[inp] = results[self._out_pos[out]]
-        self._cycle += 1
-        return (results[self._out_pos[SOFTMAX_WW]][:, 0, :],
-                results[self._out_pos[FC_SE]][:, 0, :])
