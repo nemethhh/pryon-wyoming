@@ -1,12 +1,16 @@
 """The synthetic Pryon-format model exercises the loader, the surgery and the runner without firmware."""
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import numpy as np
 import onnx
 import pytest
 
+from conftest import REPO_ROOT
 from pypryon.graph import make_portable
 from pypryon.modelset import load_model_set
 from pypryon.runner import GraphRunner
@@ -59,3 +63,14 @@ def test_portable_has_no_unused_initializers(synth_dir) -> None:
             if attr.type == onnx.AttributeProto.GRAPH:
                 used |= {i for n in attr.g.node for i in n.input}
     assert [i.name for i in model.graph.initializer if i.name not in used] == []
+
+
+def test_streaming_logs_no_ort_warnings(synth_dir) -> None:
+    code = ("import numpy as np, sys; from pypryon import Spotter; "
+            "sp = Spotter(sys.argv[1]); "
+            "[sp.feed(np.zeros(1280, np.int16)) for _ in range(20)]")
+    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT / "src"))
+    proc = subprocess.run([sys.executable, "-c", code, str(synth_dir)],
+                          capture_output=True, text=True, env=env)
+    assert proc.returncode == 0, proc.stderr
+    assert "onnxruntime" not in proc.stderr, proc.stderr[:2000]

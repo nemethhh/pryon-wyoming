@@ -1,0 +1,12 @@
+.git
+.venv
+venv
+build
+.cache
+.superpowers
+docs
+tests
+vendor
+**/__pycache__
+.pytest_cache
+.pypryon-cache

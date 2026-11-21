@@ -394,7 +394,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     """HybridLSTM → Loop over T carrying h/c, one CPUNK cell per step."""
     site = _Site(node.name + "__port")
     nd = []
-    x = node.input[0]                     # [T, lanes, n_in]
+    x = node.input[0]                     # [T, 1 or lanes, n_in]; 1 broadcasts
     w, sw_w, zw_w = (arrays[node.input[i]] for i in (1, 2, 3))
     r, sw_r, zw_r = (arrays[node.input[i]] for i in (5, 6, 7))
     b = arrays[node.input[9]].ravel()     # [800] = [Wb, Rb]
@@ -424,11 +424,11 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
     b_cond = vi("_cond", T.BOOL, [])
     b_h = vi("_h", T.FLOAT, [LANES, hid])
     b_c = vi("_c", T.FLOAT, [LANES, hid])
-    b_x = vi("_x", T.FLOAT, [None, LANES, n_in])
+    b_x = vi("_x", T.FLOAT, [None, None, n_in])
     b_ocond = vi("_ocond", T.BOOL, [])
     b_oh = vi("_oh", T.FLOAT, [LANES, hid])
     b_oc = vi("_oc", T.FLOAT, [LANES, hid])
-    b_ox = vi("_ox", T.FLOAT, [None, LANES, n_in])
+    b_ox = vi("_ox", T.FLOAT, [None, None, n_in])
     b_oy = vi("_oy", T.FLOAT, [1, LANES, hid])
 
     it_c = body.t("iter")
@@ -496,7 +496,7 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
         [onnx.helper.make_tensor_value_info("_ocond_o", T.BOOL, []),
          onnx.helper.make_tensor_value_info(b_oh_actual, T.FLOAT, [LANES, hid]),
          onnx.helper.make_tensor_value_info(b_oc_actual, T.FLOAT, [LANES, hid]),
-         onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, LANES, n_in]),
+         onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, None, n_in]),
          onnx.helper.make_tensor_value_info(y_scan, T.FLOAT, [1, LANES, hid])],
         [])
     body_graph.initializer.extend(body.inits)

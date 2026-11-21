@@ -179,8 +179,9 @@ def build_graph(seed: int = 0, n_classes: int = 3, lstm_in: int = 12, hidden: in
     new_shape = g.op("Concat", [g.i32([1]), t_dim, g.i32([lstm_in])], axis=0)[0]
     new_shape = g.op("Cast", [new_shape], to=T.INT32)[0]
     x = g.op("Reshape", [x, new_shape])[0]                         # [1,T',C]
-    x = g.op("Tile", [x, g.i32([LANES, 1, 1])])[0]                 # [25,T',C]
-    x = g.op("Transpose", [x], perm=[1, 0, 2])[0]                  # [T',25,C]
+    # like the real graph: a no-op Tile, so the LSTM input broadcasts across lanes
+    x = g.op("Tile", [x, g.i32([1, 1, 1])])[0]                     # [1,T',C]
+    x = g.op("Transpose", [x], perm=[1, 0, 2])[0]                  # [T',1,C]
 
     outputs = []
     for branch, sizes, final in (("ww", [hidden, n_classes], "softmax_output_ww"),

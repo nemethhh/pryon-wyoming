@@ -1,0 +1,27 @@
+name: Pryon wake word
+version: 0.1.0
+slug: pypryon
+description: Amazon Pryon wake words (Alexa, …) for Assist, from models you extract yourself
+url: https://github.com/nemethhh/pryon-wyoming
+arch:
+  - amd64
+  - aarch64
+image: ghcr.io/nemethhh/{arch}-addon-pypryon
+init: false
+startup: services
+discovery:
+  - wyoming
+hassio_api: true
+map:
+  - type: share
+    read_only: true
+watchdog: tcp://[HOST]:10400
+options:
+  models_dir: /share/pypryon
+  thresholds: []
+  debug_logging: false
+schema:
+  models_dir: str
+  thresholds:
+    - str
+  debug_logging: bool
