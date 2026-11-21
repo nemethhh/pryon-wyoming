@@ -1,0 +1,15 @@
+# virtualenv
+venv/
+
+# python build/cache artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# test caches
+.pytest_cache/
+
+# agent working state (plans/reports)
+.superpowers/
