@@ -26,11 +26,9 @@ from pypryon.fe import lfbe_frames
 from pypryon.modelset import load_model_set
 from pypryon.runner import GraphRunner
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-MODEL_DIR = EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
+from conftest import MODEL_DIR, REPO_ROOT, requires_model
 
-pytestmark = pytest.mark.skipif(not MODEL_DIR.exists(), reason="firmware model dir absent")
+pytestmark = requires_model
 
 
 def golden_pcm(n_samples: int) -> np.ndarray:

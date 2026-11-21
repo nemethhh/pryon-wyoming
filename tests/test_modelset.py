@@ -22,9 +22,7 @@ import pytest
 
 from pypryon.modelset import FeConfig, KeywordSpec, ModelError, load_model_set
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-MODEL_DIR = EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
+from conftest import MODEL_DIR, requires_model
 
 # The exact externalized-state tensor names of the shipped ALEXA graph, as
 # declared by its nemort_scorer_config.json (4 LSTM h/c pairs, in
@@ -48,11 +46,6 @@ EXPECTED_STATE_OUTPUTS = [
 ]
 
 
-requires_model = pytest.mark.skipif(
-    not MODEL_DIR.is_dir(),
-    reason=f"Pryon ALEXA model dir not found: {MODEL_DIR} "
-    "(echo-dot-assist checkout missing; set $EDA_DIR)",
-)
 
 
 def _tiny_onnx_bytes() -> bytes:

@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+REPO_ROOT = Path(__file__).resolve().parents[2]
 ORACLE_BIN = REPO_ROOT / "build" / "oracle" / "pryon_test"
 
 # Rootfs-internal default manifest from tools/oracle/pryon_test.c (DEFAULT_MANIFEST);

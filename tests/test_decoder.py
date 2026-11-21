@@ -20,9 +20,7 @@ import pytest
 from pypryon.decoder import Detection, Orchestra
 from pypryon.modelset import KeywordSpec, load_model_set
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-MODEL_DIR = EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
+from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
 
 ALEXA = KeywordSpec(
     name="ALEXA", class_index=1, scorer_index_start=0, scorer_index_end=1,
@@ -141,7 +139,7 @@ def test_streaming_pushes_match_batch() -> None:
     assert parts == whole
 
 
-@pytest.mark.skipif(not MODEL_DIR.exists(), reason="firmware model dir absent")
+@requires_model
 def test_parity_vs_vendor_decoder() -> None:
     os.environ["PRYON_MODEL"] = str(MODEL_DIR / "runtime_stateless_standard.streaming.fixed.int16.onnx")
     sys.path.insert(0, str(REPO_ROOT / "vendor/pryon-native"))
@@ -151,7 +149,7 @@ def test_parity_vs_vendor_decoder() -> None:
     from pypryon.fe import lfbe_frames
     from pypryon.runner import GraphRunner
 
-    pcm = np.fromfile(EDA_DIR / "testdata/alexa_espeak.raw", "<i2")
+    pcm = load_wav16(ESPEAK_WAV)
     frames = lfbe_frames(pcm, load_model_set(MODEL_DIR).fe)
     got = GraphRunner(load_model_set(MODEL_DIR)).push_frames(frames)
     lanes = got.lanes

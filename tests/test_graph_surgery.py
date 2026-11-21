@@ -28,13 +28,9 @@ from pypryon.graph import ORT_LOAD_ERROR_HYBRID, make_portable
 # mechanical-only layer it builds on is still exposed (and tested here) via
 # rewrite_hybrid=False.
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-ALEXA_ONNX = (
-    EDA_DIR
-    / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
-    / "runtime_stateless_standard.streaming.fixed.int16.onnx"
-)
+from conftest import MODEL_DIR, requires_model
+
+ALEXA_ONNX = MODEL_DIR / "runtime_stateless_standard.streaming.fixed.int16.onnx" if MODEL_DIR else None
 
 # Shape-input positions that ONNX/ORT require to be int64 (opset 11): Reshape
 # `shape` (input 1), Slice `starts`/`ends`/`axes` (inputs 1-3), Tile `repeats`.
@@ -93,7 +89,7 @@ def _load_and_classify(data: bytes) -> str:
         return "hybrid" if ORT_LOAD_ERROR_HYBRID in str(exc) else str(exc)
 
 
-@pytest.mark.skipif(not ALEXA_ONNX.exists(), reason="firmware model dir absent")
+@requires_model
 class TestAlexaSurgery:
     def test_mechanically_clean_and_only_hybrid_ops_block_ort(self) -> None:
         out = make_portable(ALEXA_ONNX.read_bytes(), rewrite_hybrid=False)

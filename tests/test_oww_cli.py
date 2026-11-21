@@ -13,19 +13,17 @@ import pytest
 from pypryon import Spotter
 from pypryon.oww import PryonModel
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-MODEL_DIR = EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
-CLIP = EDA_DIR / "testdata/alexa_espeak.raw"
+from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
 
-pytestmark = pytest.mark.skipif(not CLIP.exists(), reason="espeak clip absent")
+pytestmark = requires_model
+CLIP = ESPEAK_WAV
 
 CHUNK = 1280          # 80 ms at 16 kHz
 
 
 def test_predict_scores_and_detections() -> None:
     model = PryonModel(MODEL_DIR)
-    pcm = np.fromfile(CLIP, "<i2")
+    pcm = load_wav16(CLIP)
     scores = []
     for i in range(0, pcm.size, CHUNK):
         scores.append(model.predict(pcm[i:i + CHUNK]))
@@ -77,7 +75,7 @@ def test_cli_rejects_48k_wav(tmp_path: Path) -> None:
 
 
 def test_cli_accepts_16k_wav(tmp_path: Path) -> None:
-    pcm = np.fromfile(CLIP, "<i2")
+    pcm = load_wav16(CLIP)
     wav = tmp_path / "clip16k.wav"
     with wave.open(str(wav), "wb") as w:
         w.setnchannels(1)

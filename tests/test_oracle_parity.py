@@ -28,10 +28,7 @@ import pytest
 from pypryon import Spotter
 from pypryon.modelset import load_model_set
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-MODEL_DIR = EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
-ESPRESSO_CLIP = EDA_DIR / "testdata/alexa_espeak.raw"
+from conftest import ESPEAK_WAV, MODEL_DIR, REPO_ROOT, load_wav16, requires_model
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CLIPS_DIR = Path(__file__).parent / "clips"
@@ -44,6 +41,13 @@ def _ensure_clips() -> dict[str, Path]:
     subprocess.run([sys.executable, str(REPO_ROOT / "tools/make_clips.py"),
                     "--out", str(CLIPS_DIR)], check=True, capture_output=True)
     return {name: CLIPS_DIR / name for name in SYNTHETIC_CLIPS}
+
+
+def _espeak_raw() -> Path:
+    """The oracle reads raw s16le; write the committed WAV out as raw."""
+    raw = CLIPS_DIR / "alexa_espeak.raw"
+    load_wav16(ESPEAK_WAV).tofile(raw)
+    return raw
 
 
 def _keyword_thresholds() -> dict[str, list[float]]:
@@ -83,11 +87,11 @@ def synthetic_clips():
 @pytest.fixture(scope="session")
 def live_oracle(synthetic_clips) -> dict[str, list[dict]] | None:
     """Live oracle runs per clip; None when firmware is absent."""
-    if not (MODEL_DIR / "pryon.manifest").exists():
+    if MODEL_DIR is None:
         return None
     from pypryon.oracle import run_oracle
     runs = {}
-    clips = {"alexa_espeak.raw": ESPRESSO_CLIP, **synthetic_clips}
+    clips = {"alexa_espeak.raw": _espeak_raw(), **synthetic_clips}
     for name, path in clips.items():
         if not path.exists():
             pytest.skip(f"clip {name} absent")
@@ -97,8 +101,8 @@ def live_oracle(synthetic_clips) -> dict[str, list[dict]] | None:
 
 def test_live_oracle_reproduces_fixtures(live_oracle, synthetic_clips) -> None:
     if live_oracle is None:
-        pytest.skip("$EDA_DIR firmware absent — live oracle unavailable")
-    clips = {"alexa_espeak.raw": ESPRESSO_CLIP, **synthetic_clips}
+        pytest.skip("set PYPRYON_MODEL_DIR for the live oracle")
+    clips = {"alexa_espeak.raw": _espeak_raw(), **synthetic_clips}
     for name in clips:
         fixture = FIXTURES / f"{Path(name).stem}_oracle.json"
         assert fixture.exists(), f"missing fixture {fixture.name}"
@@ -107,9 +111,9 @@ def test_live_oracle_reproduces_fixtures(live_oracle, synthetic_clips) -> None:
 
 def test_spotter_matches_live_oracle(live_oracle, synthetic_clips) -> None:
     if live_oracle is None:
-        pytest.skip("$EDA_DIR firmware absent — live oracle unavailable")
+        pytest.skip("set PYPRYON_MODEL_DIR for the live oracle")
     thresholds = _keyword_thresholds()
-    clips = {"alexa_espeak.raw": ESPRESSO_CLIP, **synthetic_clips}
+    clips = {"alexa_espeak.raw": _espeak_raw(), **synthetic_clips}
     errors: list[str] = []
     boundary: list[str] = []
     for name, path in clips.items():
@@ -125,6 +129,7 @@ def test_spotter_matches_live_oracle(live_oracle, synthetic_clips) -> None:
     assert not errors, errors
 
 
+@requires_model
 def test_spotter_matches_committed_fixtures_offline(synthetic_clips) -> None:
     """Firmware-free path: synthetic clips vs committed oracle JSON."""
     thresholds = _keyword_thresholds()

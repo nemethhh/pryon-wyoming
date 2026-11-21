@@ -24,15 +24,11 @@ import pytest
 
 from pypryon.graph import make_portable
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-ALEXA_ONNX = (
-    EDA_DIR
-    / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
-    / "runtime_stateless_standard.streaming.fixed.int16.onnx"
-)
+from conftest import MODEL_DIR, REPO_ROOT, requires_model
 
-pytestmark = pytest.mark.skipif(not ALEXA_ONNX.exists(), reason="firmware model dir absent")
+ALEXA_ONNX = MODEL_DIR / "runtime_stateless_standard.streaming.fixed.int16.onnx" if MODEL_DIR else None
+
+pytestmark = requires_model
 
 # The 5 streaming conv buffer shapes as declared by the graph inputs.
 CONV_BUFFERS = {

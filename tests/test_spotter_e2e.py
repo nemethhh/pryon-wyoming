@@ -21,21 +21,19 @@ import pytest
 from pypryon import PryonDetection, Spotter
 from pypryon.modelset import load_model_set
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-EDA_DIR = Path(os.environ.get("EDA_DIR", REPO_ROOT.parent / "echo-dot-assist")).resolve()
-CLIP = EDA_DIR / "testdata/alexa_espeak.raw"
+from conftest import ESPEAK_WAV, MODEL_DIR, load_wav16, requires_model
 
-pytestmark = pytest.mark.skipif(not CLIP.exists(), reason="espeak clip absent")
+pytestmark = requires_model
 
 
 @pytest.fixture(scope="module")
 def pcm() -> np.ndarray:
-    return np.fromfile(CLIP, "<i2")
+    return load_wav16(ESPEAK_WAV)
 
 
 @pytest.fixture(scope="module")
 def events(pcm) -> list[PryonDetection]:
-    return Spotter(EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA").feed(pcm)
+    return Spotter(MODEL_DIR).feed(pcm)
 
 
 def test_accept_within_clip(events) -> None:
@@ -46,9 +44,7 @@ def test_accept_within_clip(events) -> None:
 def test_matches_oracle_fixture(events) -> None:
     want = json.loads((Path(__file__).parent / "fixtures/alexa_espeak_oracle.json").read_text())
     by_type = {2: "Accept", 0: "NearMiss"}
-    spec = next(k for k in load_model_set(
-        EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
-    ).keywords if k.name == "ALEXA")
+    spec = next(k for k in load_model_set(MODEL_DIR).keywords if k.name == "ALEXA")
     thresholds = [t for t in (spec.accept, spec.notify) if t is not None]
     got = [e for e in events if e.keyword == "ALEXA"]
     assert len(got) == len(want), got
@@ -72,7 +68,7 @@ def test_matches_oracle_fixture(events) -> None:
 
 
 def test_chunked_feed_matches_whole(events, pcm) -> None:
-    spotter = Spotter(EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA")
+    spotter = Spotter(MODEL_DIR)
     out: list[PryonDetection] = []
     fed = 0
     rng = np.random.default_rng(0)
@@ -85,7 +81,7 @@ def test_chunked_feed_matches_whole(events, pcm) -> None:
 
 
 def test_scores_tail_keywords(pcm) -> None:
-    spotter = Spotter(EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA")
+    spotter = Spotter(MODEL_DIR)
     spotter.feed(pcm)
     tail = spotter.scores_tail()
     assert set(tail) == {"ALEXA", "STOP"}
@@ -93,7 +89,7 @@ def test_scores_tail_keywords(pcm) -> None:
 
 
 def test_input_contract(pcm) -> None:
-    spotter = Spotter(EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA")
+    spotter = Spotter(MODEL_DIR)
     with pytest.raises(ValueError, match="int16"):
         spotter.feed(pcm.astype(np.float32))
     with pytest.raises(ValueError, match="empty"):
@@ -104,7 +100,7 @@ def test_input_contract(pcm) -> None:
 
 def test_reset_restores_fresh_behavior(pcm) -> None:
     import dataclasses
-    model = EDA_DIR / "firmware/donut/rootfs/system/local/models/keyword/en-US/ALEXA"
+    model = MODEL_DIR
     spotter = Spotter(model)
     first = [dataclasses.astuple(e) for e in spotter.feed(pcm)]
     spotter.reset()
