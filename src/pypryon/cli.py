@@ -1,49 +1,32 @@
 """pypryon command line.
 
-  pypryon run <model_dir> <audio.(raw|wav)> [--scores]
-  pypryon convert <model_dir>
+  pypryon run <model_dir> <audio> [--scores] [--chunk N]
+  pypryon convert <model_dir> [-o PATH]
 
-`run` feeds 16 kHz mono s16 audio (raw, or a wav that must be 16 kHz mono
-16-bit) through a Spotter and prints one line per detection.  `convert`
-writes the portable ONNX conversion to .pypryon-cache/ under the current
-directory (never next to the model — model dirs are extracted firmware and
-often read-only).
+``run`` feeds 16 kHz mono s16 audio (WAV, or raw s16le) through a Spotter and
+prints one line per detection. ``convert`` writes the stock-onnxruntime version
+of the model's graph (default ``./.pypryon-cache/``, never next to the model:
+model directories are often read-only).
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import sys
-import wave
 from pathlib import Path
 
-import numpy as np
-
+from . import __version__
+from .audio import load_pcm16
 from .graph import make_portable
+from .modelset import ModelError, load_model_set
 from .spotter import Spotter
-
-CHUNK = 1280  # 80 ms feed cadence
-
-
-def _load_pcm(path: Path) -> np.ndarray:
-    if path.suffix == ".raw":
-        return np.fromfile(path, "<i2")
-    with wave.open(str(path), "rb") as w:
-        if w.getframerate() != 16000:
-            print(f"error: {path.name} is {w.getframerate()} Hz — pypryon takes "
-                  "16 kHz mono s16 only (resample first)", file=sys.stderr)
-            raise SystemExit(2)
-        if w.getnchannels() != 1 or w.getsampwidth() != 2:
-            print(f"error: {path.name} must be mono 16-bit", file=sys.stderr)
-            raise SystemExit(2)
-        return np.frombuffer(w.readframes(w.getnframes()), "<i2")
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
     spotter = Spotter(args.model_dir)
-    pcm = _load_pcm(Path(args.audio))
-    for i in range(0, pcm.size, CHUNK):
-        for det in spotter.feed(pcm[i:i + CHUNK]):
+    pcm = load_pcm16(args.audio)
+    for i in range(0, pcm.size, args.chunk):
+        for det in spotter.feed(pcm[i:i + args.chunk]):
             print(f"{det.keyword} {det.type_name} score={det.score:.6f} "
                   f"begin={det.begin_sample} end={det.end_sample}")
     if args.scores:
@@ -53,33 +36,48 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_convert(args: argparse.Namespace) -> int:
-    from .modelset import load_model_set
-
-    graph_path = load_model_set(Path(args.model_dir)).graph_path
+    graph_path = load_model_set(Path(args.model_dir).expanduser()).graph_path
     data = graph_path.read_bytes()
-    digest = hashlib.sha256(data).hexdigest()[:16]
-    cache = Path(".pypryon-cache")
-    cache.mkdir(exist_ok=True)
-    out = cache / f"{graph_path.stem}.{digest}.onnx"
+    if args.output:
+        out = Path(args.output)
+    else:
+        digest = hashlib.sha256(data).hexdigest()[:16]
+        out = Path(".pypryon-cache") / f"{graph_path.stem}.{digest}.onnx"
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(make_portable(data))
     print(out)
     return 0
 
 
+def _positive(text: str) -> int:
+    value = int(text)
+    if value < 1:
+        raise argparse.ArgumentTypeError("must be >= 1")
+    return value
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="pypryon", description=__doc__)
+    ap = argparse.ArgumentParser(prog="pypryon", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--version", action="version", version=f"pypryon {__version__}")
     sub = ap.add_subparsers(dest="cmd", required=True)
-    run = sub.add_parser("run", help="spot keywords in a raw/wav16k clip")
+    run = sub.add_parser("run", help="spot keywords in a 16 kHz mono s16 WAV or raw file")
     run.add_argument("model_dir")
     run.add_argument("audio")
-    run.add_argument("--scores", action="store_true",
-                     help="also print final per-keyword scores")
+    run.add_argument("--scores", action="store_true", help="also print final per-keyword scores")
+    run.add_argument("--chunk", type=_positive, default=1280,
+                     help="samples per feed (default 1280 = 80 ms)")
     run.set_defaults(fn=_cmd_run)
-    conv = sub.add_parser("convert", help="write the portable ONNX cache")
+    conv = sub.add_parser("convert", help="write the stock-onnxruntime graph")
     conv.add_argument("model_dir")
+    conv.add_argument("-o", "--output", help="output path (default ./.pypryon-cache/...)")
     conv.set_defaults(fn=_cmd_convert)
     args = ap.parse_args(argv)
-    return args.fn(args)
+    try:
+        return args.fn(args)
+    except (ModelError, ValueError, OSError) as exc:
+        print(f"pypryon: error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

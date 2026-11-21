@@ -22,7 +22,7 @@ CHUNK = 1280          # 80 ms at 16 kHz
 
 
 def _cli(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
-    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT))
+    env = dict(os.environ, PYTHONPATH=str(REPO_ROOT / "src"))
     return subprocess.run([sys.executable, "-m", "pypryon.cli", *args],
                           capture_output=True, text=True, cwd=cwd or REPO_ROOT,
                           env=env)
