@@ -2,9 +2,10 @@
 
 Fitted against libpryon (qemu oracle) on alexa-en-US:
 
-* ``moving-average-max-pool`` window 1 scores a step as the max over lanes; the
-  verifier (``DETECTION_AUXILIARY``) spotter is an alternative accept path that is only
-  checked when the primary does not accept, and an accept of either locks both;
+* ``moving-average-max-pool`` window 1 scores a step as the max over lanes (other windows
+  are not served); the verifier (``DETECTION_AUXILIARY``) spotter is an alternative
+  accept path, checked only when the primary does not accept — fitted from two oracle
+  events, so same-step crossings and its own lock period are unconfirmed;
 * accepts fire at the first step at or above the active threshold, ending at the
   step's last sample, and lock the keyword for its lock period (frames);
 * a near miss is the peak over the 8 steps from the first step at or above notify,
@@ -81,6 +82,26 @@ def _classifier(spec: SpotterSpec):
     return None
 
 
+def _unservable(spec: SpotterSpec, decoders: dict | None) -> str | None:
+    """Why this spotter cannot be run faithfully (only validated layouts and rules are served)."""
+    if _classifier(spec) is None:
+        return f"unsupported classifier ({spec.classifier.get('type')})"
+    if isinstance(_classifier(spec), MaxPool) and _classifier(spec).window != 1:
+        return f"moving-average window {_classifier(spec).window} not validated"
+    if decoders is None:
+        return None
+    graph = decoders.get(spec.scorer)
+    comp = spec.components[0]
+    if graph is None or comp.component not in graph.outputs:
+        return f"decoder {spec.scorer} has no output {comp.component!r}"
+    shape = graph.output_shapes.get(comp.component, [])
+    if len(shape) != 3 or shape[0] != 1:
+        return f"output {comp.component} has layout {shape}, expected [1, lanes, classes]"
+    if isinstance(shape[2], int) and not 0 <= comp.class_index < shape[2]:
+        return f"class index {comp.class_index} outside {comp.component} ({shape[2]} classes)"
+    return None
+
+
 class _Keyword:
     def __init__(self, primary: SpotterSpec, auxiliary: SpotterSpec | None):
         self.primary, self.auxiliary = primary, auxiliary
@@ -101,7 +122,7 @@ class DavsOrchestra:
     """Streaming decision layer over DavsPipeline outputs (keys ``"<scorer>/<component>"``)."""
 
     def __init__(self, spotters: list[SpotterSpec], *, frames_per_step: int = 8,
-                 words: dict[int, str] | None = None):
+                 words: dict[int, str] | None = None, decoders: dict | None = None):
         self.step_samples = frames_per_step * FRAME_SAMPLES
         primaries: dict[str, SpotterSpec] = {}
         aux: dict[str, SpotterSpec] = {}
@@ -110,11 +131,11 @@ class DavsOrchestra:
         self._keywords: list[_Keyword] = []
         for name, spec in primaries.items():
             kw = _Keyword(spec, aux.get(name))
-            if kw.cls is None or (kw.auxiliary is not None and kw.aux_cls is None):
-                key = (name, spec.classifier.get("type"))
-                if key not in _WARNED:  # every connection builds an orchestra
-                    _WARNED.add(key)
-                    _LOGGER.warning("Keyword %s uses an unsupported classifier (%s); not served", *key)
+            problem = next((p for p in (_unservable(s, decoders) for s in (spec, aux.get(name)) if s) if p), None)
+            if problem:
+                if (name, problem) not in _WARNED:  # every connection builds an orchestra
+                    _WARNED.add((name, problem))
+                    _LOGGER.warning("Keyword %s not served: %s", name, problem)
                 continue
             self._keywords.append(kw)
         if words:  # the model's word order puts the wake word first (ALEXA 1 before STOP)

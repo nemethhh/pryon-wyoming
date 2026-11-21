@@ -221,3 +221,15 @@ def test_davs_detection_through_server(tmp_path) -> None:
     events = _run(lambda port: _stream(port, NOISE, names=["alexa"]), tmp_path, thresholds={"ALEXA": 0.01})
     names = [Detection.from_event(e).name for e in events if Detection.is_type(e.type)]
     assert names and set(names) == {"alexa"}
+
+
+def test_default_wake_word_never_a_leftover_keyword(tmp_path) -> None:
+    from synthmodel import build_davs_model_dir
+
+    build_model_dir(tmp_path / "A_OLD", keywords=("ALEXA", "HEY"))
+    build_davs_model_dir(tmp_path / "Z_DAVS")
+    models = load_all(tmp_path, {})
+    assert [(m.dir.name, m.keywords, m.default) for m in models] == [
+        ("Z_DAVS", ["ALEXA", "STOP"], "ALEXA"), ("A_OLD", ["HEY"], None)]
+    handler = PryonWakeHandler(make_info(models), models, None, None)
+    assert handler._default_names == {"alexa"}

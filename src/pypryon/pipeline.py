@@ -12,13 +12,14 @@ import onnxruntime as ort
 
 from .davs import DavsModelSet, GraphSpec
 from .graph import initial_state, make_portable
+from .runner import session_options
 
 
 def create_stage_session(spec: GraphSpec) -> tuple[ort.InferenceSession, dict[str, np.ndarray]]:
     """Portable session for one graph plus the stored ("primed") values of its states."""
     raw = spec.path.read_bytes()
     session = ort.InferenceSession(make_portable(raw, keep_inputs=spec.state_inputs),
-                                   providers=["CPUExecutionProvider"])
+                                   sess_options=session_options(), providers=["CPUExecutionProvider"])
     return session, initial_state(raw, spec.state_inputs)
 
 

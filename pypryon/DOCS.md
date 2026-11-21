@@ -17,7 +17,9 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
    (Amazon's downloaded wake words, e.g. `alexa-en-US`) are directories of subdirectories (`encoder/`,
    `alexa-wakeworddecoder/`, `BDPGeneratedFiles/`, …) with a `pryon.manifest` at the top; copy the whole
    directory (see the [README](https://github.com/nemethhh/pryon-wyoming#getting-a-model-directory)).
-   If two directories offer the same wake word, the DAVS set is used.
+   If two directories offer the same wake word, the DAVS set is used. DAVS support is new: decisions match
+   Amazon's library on the test clips, but parts of the rules are fitted rather than confirmed (see the
+   README's "How it is validated").
    Each directory under `/share/pypryon` is loaded; every keyword in it becomes a wake word
    (the ALEXA directory offers `alexa` and `stop`). A keyword found in two directories is served from the
    first one only.
@@ -41,7 +43,8 @@ and copy it to Home Assistant (see below). Without one, the add-on does not star
 - **The add-on stops at start with `no Pryon model found under /share/pypryon`**: the model directory is missing
   or misplaced; the log names the path it searched. The directory must hold `pryon.manifest` directly.
 - **`Skipping /share/pypryon/X: ...`**: that directory is not a model this version can load; the others still
-  load. `Keyword HEY_DISNEY uses an unsupported classifier; not served` is expected for DAVS sets.
+  load. `Keyword HEY_DISNEY not served: unsupported classifier (...)` is expected for DAVS sets; other
+  `not served` lines name the keyword and why (for example a decoder layout not validated yet).
 - Detections are logged at the default level as `Detected alexa (score 0.937)`.
 
 ## Legal

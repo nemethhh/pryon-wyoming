@@ -87,11 +87,18 @@ pypryon convert <model_dir> [-o model.onnx]     # the stock-onnxruntime graph
   - Firmware ALEXA: on an espeak "Alexa" clip and synthetic negatives, pypryon produces the same events
     (keyword, type, begin/end sample) with scores within 1e-3 of the library's (events within 1e-2 of a
     threshold are reported, not failed). The parsed oracle runs are committed in `tests/fixtures/`.
-  - DAVS alexa-en-US: on Piper TTS "Alexa" clips (`tools/make_tts_clips.py`), espeak and synthetic
+  - DAVS alexa-en-US: on 12 Piper TTS "Alexa" clips (`tools/make_tts_clips.py`), espeak and synthetic
     negatives, every decision matches (keyword, Accept / AcceptAuxiliary / NearMiss, end sample, client-property
-    overrides). Scores match within 1e-4 except near digital silence, where two events differ by up to 0.022
-    (the encoder's quantized arithmetic is not bit-exact there yet). `begin_sample` is approximate for DAVS
-    sets, and the library's 0.1 % "probabilistic accept" is not reproduced.
+    overrides). Scores match within 1e-4, except two events that differ by 0.0016 and 0.022; the cause is not
+    yet identified, and near a threshold such a difference can flip a decision.
+  - The DAVS rules are fitted to the oracle's events, not read out of libpryon. In particular the verifier
+    (a second ALEXA spotter that can accept on its own, reported as `AcceptAuxiliary`) is fitted from two
+    such events: open corners are both spotters crossing in the same step (pypryon lets the primary win), which
+    lock period an auxiliary accept uses (pypryon: the primary's 132 frames), and the verifier's own notify
+    threshold (unused).
+  - Not reproduced for DAVS sets: exact `begin_sample` (pypryon reports the start of the winning lane's window)
+    and the library's 0.1 % "probabilistic accept". Keywords whose rules or decoder layout have not been
+    validated are logged at startup and not served (e.g. everything in alexa-de-DE today).
 - **Arithmetic parity.** Every rewritten kernel is compared with the vendored NumPy emulation of the device's
   quantized arithmetic (`vendor/pryon-native`), on opsets 11–21.
 - **CI without Amazon bytes.** Synthetic models with the same graph structure, exporter quirks and file layout

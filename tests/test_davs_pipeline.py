@@ -112,3 +112,12 @@ def test_davs_spotter_serves_alexa_and_stop(davs_set) -> None:
     assert sp.keywords == ["ALEXA", "STOP"]   # word-id order: the wake word first
     sp.feed(np.zeros(16000, np.int16))
     assert set(sp.last_scores) == {"STOP", "ALEXA"}
+
+
+def test_sessions_use_one_thread(davs_set, tmp_path) -> None:
+    # default pools spin a core per session: on a Pi that costs more than the model
+    for session, _ in DavsPipeline(davs_set).sessions.values():
+        opts = session.get_session_options()
+        assert (opts.intra_op_num_threads, opts.inter_op_num_threads) == (1, 1)
+    old = Spotter(build_model_dir(tmp_path / "OLD")).session.get_session_options()
+    assert (old.intra_op_num_threads, old.inter_op_num_threads) == (1, 1)

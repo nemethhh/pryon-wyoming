@@ -27,7 +27,7 @@ ACCEPT_AUXILIARY = 3   # DAVS verifier accepts (libpryon reports them as RESULT 
 @dataclass(frozen=True)
 class PryonDetection:
     keyword: str
-    detection_type: int       # ACCEPT (2) or NEAR_MISS (0)
+    detection_type: int       # ACCEPT (2), ACCEPT_AUXILIARY (3) or NEAR_MISS (0)
     score: float
     begin_sample: int
     end_sample: int
@@ -182,7 +182,7 @@ class _DavsBackend:
 
         spotters = list(model_set.spotters)
         probe = DavsOrchestra(spotters, frames_per_step=model_set.encoder.frames_per_step,
-                              words=model_set.words)
+                              words=model_set.words, decoders=model_set.decoders)
         if thresholds:
             for name in thresholds:
                 if name not in probe.keywords:
@@ -192,7 +192,7 @@ class _DavsBackend:
                         if s.name in thresholds else s for s in spotters]
         self._pipeline = DavsPipeline(model_set, sessions=session)
         self._orchestra = DavsOrchestra(spotters, frames_per_step=model_set.encoder.frames_per_step,
-                                        words=model_set.words)
+                                        words=model_set.words, decoders=model_set.decoders)
         self.keywords = self._orchestra.keywords
         accepts = {s.name: s.accept for s in spotters if not s.auxiliary}
         self.thresholds = {k: accepts[k] for k in self.keywords}

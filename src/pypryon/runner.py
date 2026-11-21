@@ -25,10 +25,18 @@ def _concrete(shape) -> list[int]:
     return [d if isinstance(d, int) else 1 for d in shape]
 
 
+def session_options() -> ort.SessionOptions:
+    """One thread per session: the graphs are tiny, and idle ORT pools spin whole cores."""
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = 1
+    opts.inter_op_num_threads = 1
+    return opts
+
+
 def create_session(model_set: ModelSet) -> ort.InferenceSession:
     """Convert the model's graph and open it; safe to share across GraphRunners."""
     return ort.InferenceSession(make_portable(model_set.graph_path.read_bytes()),
-                                providers=["CPUExecutionProvider"])
+                                sess_options=session_options(), providers=["CPUExecutionProvider"])
 
 
 @dataclass

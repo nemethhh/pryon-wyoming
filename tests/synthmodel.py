@@ -369,7 +369,7 @@ def _davs_encoder(seed: int) -> bytes:
                     _vi(buf_out, T.FLOAT, [BUF_ROWS, MEL])], opset=15, ir=8)
 
 
-def _davs_alexa_decoder(seed: int) -> bytes:
+def _davs_alexa_decoder(seed: int, lanes_first: bool = False) -> bytes:
     """Embedding -> two 16-lane LSTM rings: det/vrf scores [1,16,3] and alignments [1,16,2]."""
     g = _Graph(np.random.default_rng(seed + 1))
     x = g.op("Tile", ["embedding", _i64(g, [1, DAVS_LANES, 1])])[0]    # [1,16,E] (T=1)
@@ -389,9 +389,11 @@ def _davs_alexa_decoder(seed: int) -> bytes:
             mm = g.hybrid_gemm(lanes, hid, n_out)
             mm = g.op("Add", [mm, g.init(g.rng.normal(0, 0.5, n_out).astype(np.float32), "b")])[0]
             sm = g.op("Softmax", [mm], axis=-1)[0]
-            g.op("Unsqueeze", [sm, _i64(g, [0])])
+            # alexa-de-DE style decoders emit [lanes, 1, classes]
+            g.op("Unsqueeze", [sm, _i64(g, [1 if lanes_first else 0])])
             g.nodes[-1].output[0] = head
-            outputs.append(_vi(head, T.FLOAT, [1, DAVS_LANES, n_out]))
+            shape = [DAVS_LANES, 1, n_out] if lanes_first else [1, DAVS_LANES, n_out]
+            outputs.append(_vi(head, T.FLOAT, shape))
         outputs += [_vi(f"{ring}_hn", T.FLOAT, [DAVS_LANES, hid]),
                     _vi(f"{ring}_cn", T.FLOAT, [DAVS_LANES, hid])]
         extra += [_vi(f"{ring}_h0", T.FLOAT, [DAVS_LANES, hid]),
@@ -454,7 +456,7 @@ def _scorer(name: str, nemort: str, frames: int, feat: int, outputs: int, skip: 
             "config_type": "scorer-config", "config_version": 1}
 
 
-def build_davs_model_dir(dest: Path, *, seed: int = 0) -> Path:
+def build_davs_model_dir(dest: Path, *, seed: int = 0, lanes_first: bool = False) -> Path:
     """Write a synthetic DAVS set with alexa-en-US's file layout and return it."""
     dest = Path(dest)
     dirs = ["audiofrontendconfig", "encoder", "alexa-wakeworddecoder", "multi-wakeword-wakeworddecoder",
@@ -504,7 +506,7 @@ def build_davs_model_dir(dest: Path, *, seed: int = 0) -> Path:
         "lstm_components": [{"input_component": f"{r}_{s}0", "output_component": f"{r}_{s}n"}
                             for r in ("scores", "alignments") for s in ("h", "c")],
         "recurrent_state_initialization": False})
-    (dest / "alexa-wakeworddecoder/alexa.onnx").write_bytes(_davs_alexa_decoder(seed))
+    (dest / "alexa-wakeworddecoder/alexa.onnx").write_bytes(_davs_alexa_decoder(seed, lanes_first))
     write_json("multi-wakeword-wakeworddecoder/nemort_scorer_config_decoder_stop.json", {
         "object_type_name": "nemort_scorer_config", "file_format": "ONNX", "model_filepath": "stop.onnx",
         "inputs": [{"input_name": "input_6", "input_source": "tensor_artifact", "tensor_name": "encoder_output"}],

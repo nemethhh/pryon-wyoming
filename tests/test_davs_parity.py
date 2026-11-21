@@ -1,10 +1,10 @@
 """DAVS alexa-en-US parity with libpryon: keyword, type, end sample, score.
 
-Decisions must match exactly. Scores must match within 1e-3; differences up to
-DRIFT_LIMIT are reported, not failed: near digital silence the encoder's quantized
-arithmetic is not yet bit-exact (two events on the current clip set). begin_sample is
-not compared (libpryon derives it at frame resolution from the alignments head).
-HEY_DISNEY is not served, so its oracle events are dropped.
+Decisions must match exactly. Scores must match within 1e-3, except allow-listed known
+drifts on the committed fixtures (cause not yet identified). Generated TTS clips differ
+per machine, so their score differences up to CLIP_DRIFT_LIMIT are reported, not failed.
+begin_sample is not compared (libpryon derives it at frame resolution from the alignments
+head). HEY_DISNEY is not served, so its oracle events are dropped.
 """
 from __future__ import annotations
 
@@ -20,10 +20,12 @@ from pypryon import Spotter
 from conftest import CLIPS_DIR, DAVS_MODEL_DIR, ESPEAK_WAV, ORACLE_ROOTFS, REPO_ROOT, load_wav16, requires_davs
 
 FIXTURES = REPO_ROOT / "tests/fixtures/davs/alexa-en-US"
-DRIFT_LIMIT = 0.03
+CLIP_DRIFT_LIMIT = 0.03
+# (fixture, keyword, end_sample) -> allowed |score delta|; unexplained, see README
+KNOWN_DRIFT = {("alexa_espeak", "ALEXA", 97920): 0.025}
 
 
-def _parity(dets, refs, thresholds) -> list[str]:
+def _parity(dets, refs, thresholds, *, clip: str = "", drift_limit: float = 0.0) -> list[str]:
     refs = [r for r in refs if r["keyword"] != "HEY_DISNEY"]
     errors = []
     if len(dets) != len(refs):
@@ -38,10 +40,11 @@ def _parity(dets, refs, thresholds) -> list[str]:
         delta = abs(det.score - ref["classifier_score"])
         if margin > 1e-2 and delta > 1e-3:
             line = f"{ref['keyword']} score {det.score:.6f} vs {ref['classifier_score']:.6f}"
-            if delta > DRIFT_LIMIT:
+            allowed = max(drift_limit, KNOWN_DRIFT.get((clip, ref["keyword"], ref["end_sample"]), 0.0))
+            if delta > allowed:
                 errors.append(line)
             else:
-                print(f"drift: {line}")
+                print(f"drift: {clip} {line}")
     return errors
 
 
@@ -59,7 +62,7 @@ def test_davs_espeak_nearmiss_matches_oracle() -> None:
     spotter = Spotter(DAVS_MODEL_DIR)
     dets = spotter.feed(load_wav16(ESPEAK_WAV))
     refs = json.loads((FIXTURES / "alexa_espeak_oracle.json").read_text())
-    assert _parity(dets, refs, _thresholds(spotter)) == []
+    assert _parity(dets, refs, _thresholds(spotter), clip="alexa_espeak") == []
 
 
 @requires_davs
@@ -95,7 +98,8 @@ def test_davs_clips_match_oracle() -> None:
         with wave.open(str(wav)) as w:
             assert (w.getframerate(), w.getnchannels(), w.getsampwidth()) == (16000, 1, 2), wav.name
         spotter.reset()
-        errors += [f"{wav.stem}: {e}" for e in _parity(spotter.feed(load_wav16(wav)), refs, thresholds)]
+        errors += [f"{wav.stem}: {e}" for e in _parity(spotter.feed(load_wav16(wav)), refs, thresholds,
+                                                         clip=wav.stem, drift_limit=CLIP_DRIFT_LIMIT)]
     assert errors == []
 
 
@@ -116,5 +120,6 @@ def test_override_matches_oracle(prop) -> None:
         refs = run_oracle_cached(wav, DAVS_MODEL_DIR, wav.parent / "oracle", {prop: 1})
         spotter.reset()
         spotter.set_client_property(prop, 1)
-        errors += [f"{stem}: {e}" for e in _parity(spotter.feed(load_wav16(wav)), refs, thresholds)]
+        errors += [f"{stem}: {e}" for e in _parity(spotter.feed(load_wav16(wav)), refs, thresholds,
+                                                     clip=stem, drift_limit=CLIP_DRIFT_LIMIT)]
     assert errors == []

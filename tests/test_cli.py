@@ -96,3 +96,13 @@ def test_load_pcm16_raw_roundtrip(tmp_path) -> None:
     raw = tmp_path / "x.raw"
     pcm.astype("<i2").tofile(raw)
     np.testing.assert_array_equal(load_pcm16(raw), pcm)
+
+
+def test_convert_davs_set_is_a_clear_error(tmp_path) -> None:
+    from synthmodel import build_davs_model_dir
+
+    d = build_davs_model_dir(tmp_path / "DAVS")
+    proc = _cli("convert", str(d), "-o", str(tmp_path / "x.onnx"))
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "DAVS" in _last_line(proc.stderr)

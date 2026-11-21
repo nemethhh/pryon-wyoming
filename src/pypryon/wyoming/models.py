@@ -22,7 +22,8 @@ class LoadedModel:
     model_set: ModelSet | DavsModelSet
     session: Any                        # shared by every connection's Spotter
     thresholds: dict[str, float]        # overrides for this model's keywords only
-    keywords: list[str]                 # served keywords, word order (first = wake word)
+    keywords: list[str]                 # served keywords, word order
+    default: str | None = None          # the model's own wake word, if this model serves it
 
 
 def discover(models_dir: Path) -> list[Path]:
@@ -54,10 +55,11 @@ def parse_thresholds(entries: Iterable[str]) -> dict[str, float]:
 def _open(path: Path) -> tuple[ModelSet | DavsModelSet, Any, list[str]]:
     model_set = load_model_set(path)
     if isinstance(model_set, DavsModelSet):
-        keywords = DavsOrchestra(model_set.spotters, words=model_set.words).keywords
+        keywords = DavsOrchestra(model_set.spotters, words=model_set.words,
+                                 decoders=model_set.decoders).keywords
         skipped = sorted({s.name for s in model_set.spotters} - set(keywords))
         if skipped:
-            _LOGGER.warning("%s: not serving %s (unsupported classifier)", path, ", ".join(skipped))
+            _LOGGER.warning("%s: not serving %s (see the 'not served' reasons above)", path, ", ".join(skipped))
         return model_set, create_sessions(model_set), keywords
     return model_set, create_session(model_set), [k.name for k in model_set.keywords]
 
@@ -88,8 +90,9 @@ def load_all(models_dir: Path, thresholds: Mapping[str, float]) -> list[LoadedMo
             served.append(name)
         if not served:
             continue
+        default = keywords[0] if keywords and keywords[0] in served else None
         models.append(LoadedModel(path, model_set, session,
-                                  {k: v for k, v in thresholds.items() if k in served}, served))
+                                  {k: v for k, v in thresholds.items() if k in served}, served, default))
     if not models:
         raise RuntimeError(
             f"no Pryon model found under {models_dir} (expected <dir>/<NAME>/pryon.manifest)")

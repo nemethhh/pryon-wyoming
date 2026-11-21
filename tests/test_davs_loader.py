@@ -80,3 +80,64 @@ def test_load_real_davs() -> None:
     primary, aux = (s for s in ms.spotters if s.name == "ALEXA")
     assert (primary.accept, primary.min_accept, primary.max_accept, primary.lock) == (0.921, 0.845, 0.929, 132)
     assert (aux.accept, aux.auxiliary, aux.lock) == (0.898, True, 100)
+
+
+def _mutate_kw(src: Path, dst: Path, edit) -> Path:
+    import json
+    import shutil
+    shutil.copytree(src, dst)
+    kw = dst / "BDPGeneratedFiles/kw.cfg.json"
+    data = json.loads(kw.read_text())
+    edit(data["keyword-orchestra"]["keyword-spotters"])
+    kw.write_text(json.dumps(data))
+    return dst
+
+
+def _alexa(spotters) -> dict:
+    return next(s for s in spotters if s["name"] == "ALEXA" and "spotter-type" not in s["spotter"])
+
+
+@pytest.mark.parametrize("edit", [
+    lambda sp: _alexa(sp)["spotter"]["word-component-array"][0]["scorer-output-component"].update(name="nope"),
+    lambda sp: _alexa(sp)["spotter"]["word-component-array"][0].update({"scorer-index": 9}),
+    lambda sp: _alexa(sp)["classifier"].update({"window-size": 4}),
+])
+def test_unservable_keyword_not_served_never_crashes(davs_dir, tmp_path, edit, caplog) -> None:
+    import logging
+
+    import numpy as np
+
+    from pypryon import Spotter
+    d = _mutate_kw(davs_dir, tmp_path / "BAD", edit)
+    with caplog.at_level(logging.WARNING):
+        sp = Spotter(d)
+    assert sp.keywords == ["STOP"]
+    sp.feed(np.random.default_rng(0).normal(0, 3000, 16000).astype(np.int16))
+
+
+def test_lanes_first_decoder_not_served(tmp_path) -> None:
+    from pypryon import Spotter
+
+    from synthmodel import build_davs_model_dir
+    d = build_davs_model_dir(tmp_path / "LF", lanes_first=True)
+    assert Spotter(d).keywords == ["STOP"]
+
+
+@pytest.mark.parametrize(("field", "value"), [("lock-period", "abc"), ("keyword-feature-window-length", None)])
+def test_malformed_spotter_number_is_model_error(davs_dir, tmp_path, field, value) -> None:
+    d = _mutate_kw(davs_dir, tmp_path / "NUM", lambda sp: _alexa(sp)["spotter"].update({field: value}))
+    with pytest.raises(ModelError, match=field):
+        load_model_set(d)
+
+
+def test_decoder_reading_unpublished_tensor_is_model_error(davs_dir, tmp_path) -> None:
+    import json
+    import shutil
+    d = tmp_path / "ART"
+    shutil.copytree(davs_dir, d)
+    cfg = d / "multi-wakeword-wakeworddecoder/nemort_scorer_config_decoder_stop.json"
+    data = json.loads(cfg.read_text())
+    data["inputs"][0]["tensor_name"] = "not_published"
+    cfg.write_text(json.dumps(data))
+    with pytest.raises(ModelError, match="not_published"):
+        load_model_set(d)

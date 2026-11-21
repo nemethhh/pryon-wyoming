@@ -41,7 +41,7 @@ class PryonWakeHandler(AsyncEventHandler):
         self._models = models
         self._all_names = {kw.lower() for m in models for kw in m.keywords}
         # with no names requested, only each model's wake word (e.g. not ALEXA's STOP)
-        self._default_names = {m.keywords[0].lower() for m in models}
+        self._default_names = {m.default.lower() for m in models if m.default}
         self._converter = AudioChunkConverter(rate=SAMPLE_RATE, width=2, channels=1)
         self._names: set[str] = set(self._default_names)
         self._spotters: list[Spotter] | None = None

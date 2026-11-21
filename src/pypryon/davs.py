@@ -88,6 +88,12 @@ def _json(path: Path) -> Any:
         raise ModelError(f"{path}: invalid JSON: {exc}") from exc
 
 
+def _int(value: Any, path: Path, where: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or float(value) != int(value):
+        raise ModelError(f"{path}: {where!r} must be an integer, got {value!r}")
+    return int(value)
+
+
 def _get(obj: Any, key: str, path: Path, where: str = "") -> Any:
     if not isinstance(obj, dict) or key not in obj:
         raise ModelError(f"{path}: missing {where}{key!r}")
@@ -112,6 +118,7 @@ class GraphSpec:
     lstm_states: int
     frames_per_step: int
     feat_dim: int
+    output_shapes: dict[str, list] = field(default_factory=dict)   # declared dims (int, str or None)
 
 
 @dataclass(frozen=True)
@@ -177,13 +184,15 @@ def _graph(name: str, scorer: dict, scorer_path: Path) -> GraphSpec:
     state_out = [str(_get(p, "output_component", nemort_path)) for p in lstm]
     state_in += [str(n) for n in nemort.get("recurrent_components_input", [])]
     state_out += [str(n) for n in nemort.get("recurrent_components_output", [])]
-    _check_graph(model, nemort_path, [i.name for i in inputs] + state_in, list(outputs) + state_out)
+    shapes = _check_graph(model, nemort_path, [i.name for i in inputs] + state_in, list(outputs) + state_out)
     return GraphSpec(name, model, inputs, outputs, state_in, state_out, len(lstm),
-                     int(scorer.get("scorer.initialize.frame_count", 1)),
-                     int(_get(scorer, "scorer.feat.dimensions", scorer_path, f"{name}.")))
+                     _int(scorer.get("scorer.initialize.frame_count", 1), scorer_path, "scorer.initialize.frame_count"),
+                     _int(_get(scorer, "scorer.feat.dimensions", scorer_path, f"{name}."), scorer_path,
+                          "scorer.feat.dimensions"),
+                     {comp: shapes[comp] for comp in outputs})
 
 
-def _check_graph(model: Path, ref: Path, inputs: list[str], outputs: list[str]) -> None:
+def _check_graph(model: Path, ref: Path, inputs: list[str], outputs: list[str]) -> dict[str, list]:
     import onnx
 
     if not model.is_file():
@@ -199,11 +208,16 @@ def _check_graph(model: Path, ref: Path, inputs: list[str], outputs: list[str]) 
     for name in outputs:
         if name not in have_out:
             raise ModelError(f"{model.name}: declared output {name!r} (from {ref.name}) is not a graph output")
+    return {o.name: [d.dim_value if d.HasField("dim_value") else (d.dim_param or None)
+                     for d in o.type.tensor_type.shape.dim] for o in graph.output}
 
 
 def _scorers(path: Path) -> dict[str, tuple[dict, Path]]:
     data = _json(path)
-    return {str(_get(s, "name", path, "scorers[].")): (s, path) for s in _get(data, "scorers", path)}
+    scorers = _get(data, "scorers", path)
+    if not isinstance(scorers, list) or not scorers:
+        raise ModelError(f"{path}: 'scorers' must be a non-empty list")
+    return {str(_get(s, "name", path, "scorers[].")): (s, path) for s in scorers}
 
 
 def _thresholds(raw: dict, path: Path, where: str) -> dict[str, Any]:
@@ -235,11 +249,11 @@ def _spotter(raw: dict, path: Path, i: int) -> SpotterSpec:
     scorers = _get(raw, "scorers", path, where)
     if not isinstance(scorers, list) or len(scorers) != 1:
         raise ModelError(f"{path}: {where}'scorers' must list exactly one scorer")
-    components = [WordComponent(int(_get(c, "scorer-index", path, where)),
+    components = [WordComponent(_int(_get(c, "scorer-index", path, where), path, "scorer-index"),
                                 str(_get(_get(c, "scorer-output-component", path, where), "name", path)),
                                 (c.get("keyword-start-end-component") or {}).get("name"),
-                                int(c.get("keyword-start-scorer-index", 0)),
-                                int(c.get("keyword-end-scorer-index", 1)),
+                                _int(c.get("keyword-start-scorer-index", 0), path, "keyword-start-scorer-index"),
+                                _int(c.get("keyword-end-scorer-index", 1), path, "keyword-end-scorer-index"),
                                 c.get("word-score-history-size"))
                   for c in _get(spot, "word-component-array", path, where)]
     return SpotterSpec(
@@ -248,8 +262,9 @@ def _spotter(raw: dict, path: Path, i: int) -> SpotterSpec:
         scorer=str(scorers[0]), components=components,
         classifier=dict(_get(raw, "classifier", path, where)),
         smoothers=list(spot.get("posterior-smoothers", [])),
-        kw_window=int(_get(spot, "keyword-feature-window-length", path, where)),
-        lock=int(_get(spot, "lock-period", path, where)),
+        kw_window=_int(_get(spot, "keyword-feature-window-length", path, where), path,
+                       "keyword-feature-window-length"),
+        lock=_int(_get(spot, "lock-period", path, where), path, "lock-period"),
         **_thresholds(_get(spot, "classification-thresholds", path, where), path, where))
 
 
@@ -272,6 +287,13 @@ def load_davs(model_dir: Path, cfg: dict[str, Setting]) -> DavsModelSet:
             raise ModelError(f"{kw_path}: spotter {spot.name} uses unknown scorer {spot.scorer!r}")
         if spot.scorer not in decoders:
             decoders[spot.scorer] = _graph(spot.scorer, *available[spot.scorer])
+
+    published = {tensor or comp for comp, tensor in encoder.outputs.items()}
+    for spec in decoders.values():
+        for inp in spec.inputs:
+            if inp.source != "tensor_artifact" or inp.tensor not in published:
+                raise ModelError(f"{spec.path.name}: input {inp.name!r} reads {inp.tensor or inp.source!r}, "
+                                 f"which the encoder does not publish ({', '.join(sorted(published))})")
 
     words_setting = _require(cfg, "id2word.mapping_filepath", config_path)
     words = _load_words(words_setting.path, config_path)
