@@ -5,10 +5,12 @@ import logging
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-import onnxruntime as ort
-
+from ..davs import DavsModelSet
 from ..modelset import ModelSet, load_model_set
+from ..pipeline import create_sessions
+from ..rules import DavsOrchestra
 from ..runner import create_session
 
 _LOGGER = logging.getLogger(__name__)
@@ -17,10 +19,11 @@ _LOGGER = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class LoadedModel:
     dir: Path
-    model_set: ModelSet
-    session: ort.InferenceSession       # shared by every connection's Spotter
+    model_set: ModelSet | DavsModelSet
+    session: Any                        # shared by every connection's Spotter
     thresholds: dict[str, float]        # overrides for this model's keywords only
-    keywords: list[str]                 # served keywords, kw.cfg order (first = wake word)
+    keywords: list[str]                 # served keywords, word order
+    default: str | None = None          # the model's own wake word, if this model serves it
 
 
 def discover(models_dir: Path) -> list[Path]:
@@ -49,29 +52,47 @@ def parse_thresholds(entries: Iterable[str]) -> dict[str, float]:
     return out
 
 
+def _open(path: Path) -> tuple[ModelSet | DavsModelSet, Any, list[str]]:
+    model_set = load_model_set(path)
+    if isinstance(model_set, DavsModelSet):
+        keywords = DavsOrchestra(model_set.spotters, words=model_set.words,
+                                 decoders=model_set.decoders).keywords
+        skipped = sorted({s.name for s in model_set.spotters} - set(keywords))
+        if skipped:
+            _LOGGER.warning("%s: not serving %s (see the 'not served' reasons above)", path, ", ".join(skipped))
+        return model_set, create_sessions(model_set), keywords
+    return model_set, create_session(model_set), [k.name for k in model_set.keywords]
+
+
 def load_all(models_dir: Path, thresholds: Mapping[str, float]) -> list[LoadedModel]:
-    """Load every model under ``models_dir``; broken ones are logged and skipped."""
-    models: list[LoadedModel] = []
-    seen: dict[str, Path] = {}
+    """Load every model under ``models_dir``; broken ones are logged and skipped.
+
+    A keyword offered by several models is served once: DAVS sets (the newer
+    generation) first, then directory order.
+    """
+    opened = []
     for path in discover(models_dir):
         try:
-            model_set = load_model_set(path)
-            session = create_session(model_set)
+            opened.append((path, *_open(path)))
         except Exception as exc:  # noqa: BLE001 - one bad dir must not take the others down
             _LOGGER.warning("Skipping %s: %s", path, exc)
-            continue
+    opened.sort(key=lambda item: not isinstance(item[1], DavsModelSet))
+    models: list[LoadedModel] = []
+    seen: dict[str, Path] = {}
+    for path, model_set, session, keywords in opened:
         served = []
-        for kw in model_set.keywords:
-            if kw.name in seen:
+        for name in keywords:
+            if name in seen:
                 _LOGGER.warning("%s: keyword %s is already served from %s; skipping it here",
-                                path, kw.name, seen[kw.name])
+                                path, name, seen[name])
                 continue
-            seen[kw.name] = path
-            served.append(kw.name)
+            seen[name] = path
+            served.append(name)
         if not served:
             continue
+        default = keywords[0] if keywords and keywords[0] in served else None
         models.append(LoadedModel(path, model_set, session,
-                                  {k: v for k, v in thresholds.items() if k in served}, served))
+                                  {k: v for k, v in thresholds.items() if k in served}, served, default))
     if not models:
         raise RuntimeError(
             f"no Pryon model found under {models_dir} (expected <dir>/<NAME>/pryon.manifest)")

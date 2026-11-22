@@ -18,7 +18,7 @@ from pathlib import Path
 from . import __version__
 from .audio import load_pcm16
 from .graph import make_portable
-from .modelset import ModelError, load_model_set
+from .modelset import ModelError, ModelSet, load_model_set
 from .spotter import Spotter
 
 
@@ -36,7 +36,11 @@ def _cmd_run(args: argparse.Namespace) -> int:
 
 
 def _cmd_convert(args: argparse.Namespace) -> int:
-    graph_path = load_model_set(Path(args.model_dir).expanduser()).graph_path
+    model_set = load_model_set(Path(args.model_dir).expanduser())
+    if not isinstance(model_set, ModelSet):
+        raise ModelError(f"{args.model_dir}: convert handles single-graph models; DAVS sets are several "
+                         "graphs (encoder plus decoders) and are converted when loaded")
+    graph_path = model_set.graph_path
     data = graph_path.read_bytes()
     if args.output:
         out = Path(args.output)

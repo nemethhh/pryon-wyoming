@@ -13,7 +13,7 @@ from wyoming.wake import Detect, Detection, NotDetected
 
 from .. import __version__
 from .._constants import SAMPLE_RATE
-from ..spotter import ACCEPT, Spotter
+from ..spotter import Spotter
 from .models import LoadedModel
 
 _LOGGER = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class PryonWakeHandler(AsyncEventHandler):
         self._models = models
         self._all_names = {kw.lower() for m in models for kw in m.keywords}
         # with no names requested, only each model's wake word (e.g. not ALEXA's STOP)
-        self._default_names = {m.keywords[0].lower() for m in models}
+        self._default_names = {m.default.lower() for m in models if m.default}
         self._converter = AudioChunkConverter(rate=SAMPLE_RATE, width=2, channels=1)
         self._names: set[str] = set(self._default_names)
         self._spotters: list[Spotter] | None = None
@@ -96,7 +96,7 @@ class PryonWakeHandler(AsyncEventHandler):
         for model, spotter in zip(self._models, self._spotters, strict=True):
             for det in await asyncio.to_thread(spotter.feed, pcm):
                 name = det.keyword.lower()
-                if det.detection_type != ACCEPT or det.keyword not in model.keywords \
+                if not det.is_accept or det.keyword not in model.keywords \
                         or name not in self._names:
                     continue
                 self._detected = True

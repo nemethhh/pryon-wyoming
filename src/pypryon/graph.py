@@ -13,6 +13,7 @@ Two layers:
 from __future__ import annotations
 
 import io
+from collections.abc import Iterable
 
 import numpy as np
 import onnx
@@ -20,7 +21,6 @@ from onnx import TensorProto as T
 from onnx import helper
 from onnx import numpy_helper as _nh
 
-from ._constants import LANES
 from .modelset import ModelError
 
 # every unregistered-op error from ORT names the Hybrid kernel family
@@ -67,13 +67,17 @@ def _shape_cluster_casts(graph) -> dict[str, str]:
     return casts
 
 
-def make_portable(onnx_bytes: bytes, *, rewrite_hybrid: bool = True) -> bytes:
+def make_portable(onnx_bytes: bytes, *, rewrite_hybrid: bool = True,
+                  keep_inputs: Iterable[str] = ()) -> bytes:
     """Mechanically portability-fix a Pryon nemort ONNX graph.  Idempotent.
 
     With ``rewrite_hybrid`` (default) the Hybrid* kernels are additionally
     rewritten into standard ops implementing the measured CPUNK contract
     (see ``_rewrite_hybrid_ops``); the result runs in stock onnxruntime.
+    ``keep_inputs`` (the nemort state inputs) stay feedable even when the
+    exporter backed them with initial values ("primed" DAVS state).
     """
+    keep = set(keep_inputs)
     model = onnx.load_from_string(onnx_bytes)
     graph = model.graph
 
@@ -146,8 +150,16 @@ def make_portable(onnx_bytes: bytes, *, rewrite_hybrid: bool = True) -> bytes:
 
     # 3. Remove data-carrying initializer names from graph.input; keep the
     #    true runtime/state inputs.
+    # kept state inputs become plain inputs; callers seed them with initial_state()
+    primed = [i for i in graph.initializer if i.name in keep]
+    for init in primed:
+        graph.initializer.remove(init)
     data_inits = {i.name for i in graph.initializer if _has_data(i)}
-    kept = [i for i in graph.input if i.name not in data_inits]
+    kept, seen = [], set()
+    for i in graph.input:
+        if i.name not in data_inits and i.name not in seen:  # DAVS graphs repeat some inputs
+            kept.append(i)
+            seen.add(i.name)
     del graph.input[:]
     graph.input.extend(kept)
 
@@ -155,6 +167,7 @@ def make_portable(onnx_bytes: bytes, *, rewrite_hybrid: bool = True) -> bytes:
     if rewrite_hybrid:
         _rewrite_hybrid_ops(model)
         _drop_unused_initializers(graph)
+    _normalize_axes(model)
 
     out = io.BytesIO()
     onnx.save(model, out)
@@ -380,13 +393,32 @@ def _rewrite_hybrid_conv(graph, node, arrays) -> list:
 
 
 def _rewrite_hybrid_gemm(graph, node, arrays) -> list:
-    """HybridGemm → CPUNK matmul (no bias; downstream Add carries it)."""
+    """HybridGemm → CPUNK matmul; inputs (x, w, sw, zw, sums[, bias]) — older graphs add
+    their bias in a separate Add node, DAVS graphs pass it as input 5."""
     site = _Site(node.name + "__port")
     nd = []
-    y = _quant_matmul(site, node.input[0],
-                      arrays[node.input[1]], arrays[node.input[2]],
-                      arrays[node.input[3]], nd)
-    nd.append(site.node("Identity", [y], [node.output[0]]))
+    w = arrays[node.input[1]]
+    if _attr(node, "transB", 1) == 0:   # weights stored [K, N]
+        w = w.T.copy()
+    x = node.input[0]
+    k, n_out = w.shape[1], w.shape[0]
+    # quantization is per last-axis row: flatten leading axes, restore them after
+    rows = site.t("rows")
+    nd.append(site.node("Reshape", [x, site.init(np.array([-1, k], np.int64), "rows2")], [rows]))
+    y = _quant_matmul(site, rows, w, arrays[node.input[2]], arrays[node.input[3]], nd)
+    if len(node.input) > 5 and node.input[5]:
+        biased = site.t("biased")
+        nd.append(site.node("Add", [y, node.input[5]], [biased]))
+        y = biased
+    shape = site.t("xshape")
+    nd.append(site.node("Shape", [x], [shape]))
+    lead = site.t("lead")
+    nd.append(site.node("Slice", [shape, site.init(np.array([0], np.int64), "s0"),
+                                  site.init(np.array([-1], np.int64), "sm1"),
+                                  site.init(np.array([0], np.int64), "ax0")], [lead]))
+    out_shape = site.t("oshape")
+    nd.append(site.node("Concat", [lead, site.init(np.array([n_out], np.int64), "n")], [out_shape], axis=0))
+    nd.append(site.node("Reshape", [y, out_shape], [node.output[0]]))
     return nd, site.inits
 
 
@@ -424,8 +456,8 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
 
     b_iter = vi("_iter", T.INT64, [])
     b_cond = vi("_cond", T.BOOL, [])
-    b_h = vi("_h", T.FLOAT, [LANES, hid])
-    b_c = vi("_c", T.FLOAT, [LANES, hid])
+    b_h = vi("_h", T.FLOAT, [None, hid])
+    b_c = vi("_c", T.FLOAT, [None, hid])
     b_x = vi("_x", T.FLOAT, [None, None, n_in])
 
     it_c = body.t("iter")
@@ -489,10 +521,10 @@ def _rewrite_hybrid_lstm(graph, node, arrays) -> list:
         bn, node.name + "__bodygraph",
         [b_iter, b_cond, b_h, b_c, b_x],
         [onnx.helper.make_tensor_value_info("_ocond_o", T.BOOL, []),
-         onnx.helper.make_tensor_value_info(b_oh_actual, T.FLOAT, [LANES, hid]),
-         onnx.helper.make_tensor_value_info(b_oc_actual, T.FLOAT, [LANES, hid]),
+         onnx.helper.make_tensor_value_info(b_oh_actual, T.FLOAT, [None, hid]),
+         onnx.helper.make_tensor_value_info(b_oc_actual, T.FLOAT, [None, hid]),
          onnx.helper.make_tensor_value_info(b_x_pass, T.FLOAT, [None, None, n_in]),
-         onnx.helper.make_tensor_value_info(y_scan, T.FLOAT, [1, LANES, hid])],
+         onnx.helper.make_tensor_value_info(y_scan, T.FLOAT, [1, None, hid])],
         [])
     body_graph.initializer.extend(body.inits)
     body_graph.node.insert(0, onnx.helper.make_node(
@@ -567,8 +599,57 @@ def _rewrite_hybrid_ops(model) -> None:
 
 def _drop_unused_initializers(graph) -> None:
     """The rewritten kernels' original weights would make ORT log a warning per tensor."""
-    used = {i for n in graph.node for i in n.input}
-    used |= {o.name for o in graph.output}
+    used = {o.name for o in graph.output} | {i.name for i in graph.input}
+    for node in _all_nodes(graph):
+        used.update(node.input)
     kept = [i for i in graph.initializer if i.name in used]
     del graph.initializer[:]
     graph.initializer.extend(kept)
+
+
+def _all_nodes(graph):
+    for node in graph.node:
+        yield node
+        for attr in node.attribute:
+            if attr.type == onnx.AttributeProto.GRAPH:
+                yield from _all_nodes(attr.g)
+
+
+# op -> first default-domain opset whose `axes` is an input instead of an attribute
+_AXES_AS_INPUT = {"Squeeze": 13, "Unsqueeze": 13, "ReduceSum": 13, "ReduceMin": 18,
+                  "ReduceMax": 18, "ReduceMean": 18, "ReduceProd": 18, "ReduceL2": 18}
+
+
+def _normalize_axes(model) -> None:
+    """Give every `axes` the form the model's opset requires (exporters and our rewrites
+    both emit the attribute form; libpryon accepts either, ORT does not)."""
+    opset = next((o.version for o in model.opset_import if o.domain in ("", "ai.onnx")), 11)
+    _normalize_graph_axes(model.graph, opset)
+
+
+def _normalize_graph_axes(graph, opset: int) -> None:
+    for node in graph.node:
+        for attr in node.attribute:
+            if attr.type == onnx.AttributeProto.GRAPH:
+                _normalize_graph_axes(attr.g, opset)
+        since = _AXES_AS_INPUT.get(node.op_type)
+        if since is None or opset < since:
+            continue
+        axes = next((a for a in node.attribute if a.name == "axes"), None)
+        if axes is None:
+            continue
+        name = f"{node.name or node.output[0]}__axes"
+        graph.initializer.append(_nh.from_array(np.array(list(axes.ints), np.int64), name))
+        node.attribute.remove(axes)
+        while len(node.input) < 1:
+            node.input.append("")
+        node.input.insert(1, name) if len(node.input) > 1 else node.input.append(name)
+
+
+def initial_state(model: bytes | onnx.ModelProto, names: Iterable[str]) -> dict[str, np.ndarray]:
+    """Stored initial values of state inputs ("primed" DAVS buffers); absent names are omitted."""
+    if isinstance(model, (bytes, bytearray)):
+        model = onnx.load_from_string(bytes(model))
+    wanted = set(names)
+    return {i.name: _nh.to_array(i).copy() for i in model.graph.initializer
+            if i.name in wanted and _has_data(i)}

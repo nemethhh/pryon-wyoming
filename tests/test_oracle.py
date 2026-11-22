@@ -116,3 +116,28 @@ def test_run_oracle_rejects_bad_client_props(tmp_path: Path) -> None:
     nine = {f"P{i}": 1 for i in range(9)}
     with pytest.raises(OracleError, match="at most 8"):
         run_oracle(tmp_path / "clip.raw", client_props=nine)
+
+
+DAVS_NEARMISS_OUTPUT = r"""RESULT decoder=dec keyword=ALEXA type=0 begin=58560 end=97920 (3.66s..6.12s) meta=1840
+pryon[2] ERROR: DecoderID=dec: recognition_id=dec-0: {KWS} Unexpected detection event type NearMiss is emitted from DETECTION_AUXILIARY spotter
+pryon[4] INFO: DecoderID=dec: recognition_id=dec-1: {KWS} segmentation_score=-inf,classifier_score=0.338151,active_threshold=0.278,detection_type=NearMiss
+"""
+
+DAVS_AUX_OUTPUT = r"""RESULT decoder=dec keyword=ALEXA type=2 begin=27040 end=43520 (1.69s..2.72s) meta=1112
+RESULT decoder=dec keyword=STOP type=2 begin=40320 end=48640 (2.52s..3.04s) meta=1280
+pryon[4] INFO: DecoderID=dec: recognition_id=dec-0: {KWS} segmentation_score=-inf,classifier_score=0.909199,active_threshold=0.898,detection_type=AcceptAuxiliary
+pryon[4] INFO: DecoderID=dec: recognition_id=dec-1: {KWS} WatermarkProcessor::queryWatermarkNearKeyword returned ERROR_EINVAL
+pryon[4] INFO: DecoderID=dec: recognition_id=dec-1: {KWS} segmentation_score=-inf,classifier_score=0.705724,active_threshold=0.6,detection_type=Accept
+"""
+
+
+def test_parse_davs_nearmiss_with_offset_recognition_id() -> None:
+    assert parse_detections(DAVS_NEARMISS_OUTPUT) == [{
+        "keyword": "ALEXA", "detection_type": "NearMiss", "classifier_score": 0.338151,
+        "begin_sample": 58560, "end_sample": 97920, "active_threshold": 0.278}]
+
+
+def test_parse_davs_auxiliary_accept() -> None:
+    got = parse_detections(DAVS_AUX_OUTPUT)
+    assert [(d["keyword"], d["detection_type"], d["classifier_score"]) for d in got] == [
+        ("ALEXA", "AcceptAuxiliary", 0.909199), ("STOP", "Accept", 0.705724)]

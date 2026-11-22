@@ -1,5 +1,5 @@
 name: Pryon wake word
-version: 0.1.0
+version: 0.2.0
 slug: pypryon
 description: Amazon Pryon wake words (Alexa, …) for Assist, from models you extract yourself
 url: https://github.com/nemethhh/pryon-wyoming

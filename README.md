@@ -38,17 +38,23 @@ docker run -d -p 10400:10400 -v ~/pryon-models:/models:ro \
 
 ## Getting a model directory
 
-A model directory is what Echo firmware keeps under `/system/local/models/keyword/<locale>/<NAME>/`:
-`pryon.manifest`, `pryon.config`, `nemort_scorer_config.json`, `kw.cfg.json`, `words.shrunk.txt` and
-`runtime_stateless_standard.streaming.fixed.int16.onnx` (other files there are ignored). To get it from an
-update image of a device you own:
+Two model generations are supported:
 
-1. Download the device's OTA package.
-2. Unpack its payload into partition images (e.g. with `payload-dumper-go`).
-3. Copy the directory out of the system image (`debugfs`, or `mount -o loop,ro`).
+- **Firmware keyword models**: what Echo firmware keeps under
+  `/system/local/models/keyword/<locale>/<NAME>/`: `pryon.manifest`, `pryon.config`,
+  `nemort_scorer_config.json`, `kw.cfg.json`, `words.shrunk.txt` and
+  `runtime_stateless_standard.streaming.fixed.int16.onnx` (other files are ignored). Get it from an update
+  image of a device you own: download the OTA package, unpack its payload into partition images (e.g. with
+  `payload-dumper-go`), copy the directory out of the system image (`debugfs`, or `mount -o loop,ro`).
+  Example: Echo Dot 3rd gen, `ALEXA` (keywords ALEXA, STOP).
+- **DAVS sets**: the wake words an Echo downloads (`alexa-en-US`, …): one shared encoder plus per-word
+  decoders, laid out as `encoder/`, `alexa-wakeworddecoder/`, `multi-wakeword-wakeworddecoder/`,
+  `BDPGeneratedFiles/`, … under a top-level `pryon.manifest`. A rooted Echo keeps them under
+  `/data/.../speech/wakeword_models/davs/resources/`. Supported and validated: **alexa-en-US** (ALEXA, STOP).
+  The other en-US sets load and use the same rules, but are not validated yet.
 
-Supported: the nemort-ONNX keyword generation (e.g. Echo Dot 3rd gen firmware, `ALEXA` with keywords ALEXA and
-STOP). Not yet: DAVS-downloaded multi-graph models, and the older Kaldi-FST generation.
+Not supported: DAVS keywords with aggregated classifiers (HEY_DISNEY, logged and skipped), TVM-compiled sets,
+the CNN-only de-DE sets, and the older Kaldi-FST generation.
 
 ## Python library
 
@@ -77,26 +83,40 @@ pypryon convert <model_dir> [-o model.onnx]     # the stock-onnxruntime graph
 
 ## How it is validated
 
-- **Oracle parity.** `tools/oracle/` runs Amazon's `libpryon.so` itself under `qemu-arm`. On an espeak "Alexa"
-  clip and synthetic negatives, pypryon produces the same events (keyword, type, begin/end sample) with scores
-  within 1e-3 of the library's (events within 1e-2 of a threshold are reported, not failed). The parsed oracle
-  runs are committed in `tests/fixtures/`.
+- **Oracle parity.** `tools/oracle/` runs Amazon's `libpryon.so` itself under `qemu-arm`.
+  - Firmware ALEXA: on an espeak "Alexa" clip and synthetic negatives, pypryon produces the same events
+    (keyword, type, begin/end sample) with scores within 1e-3 of the library's (events within 1e-2 of a
+    threshold are reported, not failed). The parsed oracle runs are committed in `tests/fixtures/`.
+  - DAVS alexa-en-US: on 12 Piper TTS "Alexa" clips (`tools/make_tts_clips.py`), espeak and synthetic
+    negatives, every decision matches (keyword, Accept / AcceptAuxiliary / NearMiss, end sample, client-property
+    overrides). Scores match within 1e-4, except two events that differ by 0.0016 and 0.022; the cause is not
+    yet identified, and near a threshold such a difference can flip a decision.
+  - The DAVS rules are fitted to the oracle's events, not read out of libpryon. In particular the verifier
+    (a second ALEXA spotter that can accept on its own, reported as `AcceptAuxiliary`) is fitted from two
+    such events: open corners are both spotters crossing in the same step (pypryon lets the primary win), which
+    lock period an auxiliary accept uses (pypryon: the primary's 132 frames), and the verifier's own notify
+    threshold (unused).
+  - Not reproduced for DAVS sets: exact `begin_sample` (pypryon reports the start of the winning lane's window)
+    and the library's 0.1 % "probabilistic accept". Keywords whose rules or decoder layout have not been
+    validated are logged at startup and not served (e.g. everything in alexa-de-DE today).
 - **Arithmetic parity.** Every rewritten kernel is compared with the vendored NumPy emulation of the device's
-  quantized arithmetic (`vendor/pryon-native`).
-- **CI without Amazon bytes.** A synthetic model with the same graph structure, exporter quirks and file layout
-  (random weights, built at test time) exercises the loader, the graph rewrite, the runner, the CLI and the
-  Wyoming server on every push.
+  quantized arithmetic (`vendor/pryon-native`), on opsets 11–21.
+- **CI without Amazon bytes.** Synthetic models with the same graph structure, exporter quirks and file layout
+  (random weights, built at test time) exercise the loader, the graph rewrite, the runner, the CLI and the
+  Wyoming server on every push, for both generations.
 
 ## Development
 
 ```sh
 uv sync                                       # dev environment
 make test                                     # firmware-free suite
-PYPRYON_MODEL_DIR=~/pryon-models/ALEXA make test   # plus the real-model tests
+PYPRYON_MODEL_DIR=~/pryon-models/ALEXA PYPRYON_DAVS_MODEL_DIR=~/pryon-models/alexa-en-US make test
 make image && PYPRYON_MODEL_DIR=… make smoke  # add-on image, then stream the espeak clip through it
 ```
 
-The live-oracle tests also need `PYPRYON_ORACLE_ROOTFS` and a built harness; see
+`PYPRYON_CLIPS_DIR=~/pryon-clips` points the DAVS parity tests at your own 16 kHz mono recordings instead of
+the generated TTS clips (oracle results are cached next to them). The live-oracle tests also need
+`PYPRYON_ORACLE_ROOTFS` and a built harness; see
 [tools/oracle/README.md](tools/oracle/README.md). `tools/wyoming_client.py HOST PORT clip.wav` streams a WAV to
 any Wyoming wake word server.
 

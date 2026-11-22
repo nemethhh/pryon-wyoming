@@ -1,0 +1,10 @@
+[
+ {
+  "keyword": "ALEXA",
+  "detection_type": "NearMiss",
+  "classifier_score": 0.338151,
+  "begin_sample": 58560,
+  "end_sample": 97920,
+  "active_threshold": 0.278
+ }
+]

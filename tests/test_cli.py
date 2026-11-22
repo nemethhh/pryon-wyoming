@@ -11,6 +11,8 @@ import numpy as np
 import onnxruntime as ort
 import pytest
 
+from pypryon import __version__
+
 from conftest import REPO_ROOT
 from synthmodel import build_model_dir
 
@@ -43,7 +45,7 @@ def _last_line(stderr: str) -> str:
 def test_version_flag() -> None:
     proc = _cli("--version")
     assert proc.returncode == 0
-    assert proc.stdout.strip() == "pypryon 0.1.0"
+    assert proc.stdout.strip() == f"pypryon {__version__}"
 
 
 def test_run_synthetic_wav(synth_dir, tmp_path) -> None:
@@ -94,3 +96,13 @@ def test_load_pcm16_raw_roundtrip(tmp_path) -> None:
     raw = tmp_path / "x.raw"
     pcm.astype("<i2").tofile(raw)
     np.testing.assert_array_equal(load_pcm16(raw), pcm)
+
+
+def test_convert_davs_set_is_a_clear_error(tmp_path) -> None:
+    from synthmodel import build_davs_model_dir
+
+    d = build_davs_model_dir(tmp_path / "DAVS")
+    proc = _cli("convert", str(d), "-o", str(tmp_path / "x.onnx"))
+    assert proc.returncode == 2
+    assert "Traceback" not in proc.stderr
+    assert "DAVS" in _last_line(proc.stderr)

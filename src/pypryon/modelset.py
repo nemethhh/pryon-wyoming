@@ -21,7 +21,10 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .davs import DavsModelSet
 
 # A threshold override keyed on one client property: (name, equals, accept).
 # kw.cfg.json expresses each override as one clientProperties entry; several
@@ -300,7 +303,7 @@ def _load_keywords(
     return keywords, {name: 0 for name in prop_names}
 
 
-def load_model_set(model_dir: Path) -> ModelSet:
+def load_model_set(model_dir: Path) -> ModelSet | DavsModelSet:
     """Parse a Pryon model directory (see module docstring for file roles)."""
     model_dir = Path(model_dir)
     if not model_dir.is_dir():
@@ -321,6 +324,12 @@ def load_model_set(model_dir: Path) -> ModelSet:
     # pryon.config: Kaldi-style lines; frontend + pointers to the other files.
     if not config_path.is_file():
         raise ModelError(f"{config_path.name}: file not found (referenced from pryon.manifest)")
+    if "INCLUDE" in config_path.read_text():
+        from .davs import is_davs, load_davs, pryon_config
+
+        resolved = pryon_config(config_path)
+        if is_davs(resolved):
+            return load_davs(model_dir, resolved)
     cfg = _parse_pryon_config(config_path.read_text(), config_path)
     fe = _load_fe(cfg, config_path)
 
